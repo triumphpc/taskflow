@@ -1,0 +1,24 @@
+{
+  "name": "TaskFlow — задачи и планирование дня",
+  "short_name": "TaskFlow",
+  "description": "Список задач с приоритетами, повторами, планированием дня и синхронизацией с Google Calendar.",
+  "lang": "ru",
+  "start_url": "./index.html#/today",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Сегодня", "url": "./index.html#/today" },
+    { "name": "Планирование дня", "url": "./index.html#/today?moments=1" },
+    { "name": "Календари", "url": "./index.html#/calendar" }
+  ]
+}
