@@ -254,6 +254,9 @@ ul { list-style: none; margin: 0; padding: 0; }
   padding: 11px 13px 11px 0;
   border-bottom: 1px solid var(--line-soft);
   position: relative;
+  /* Строка тянется удержанием пальца, а iOS на то же удержание показывает
+     всплывающее меню «Скопировать» — оно перебило бы жест. */
+  -webkit-touch-callout: none;
 }
 .task:last-child { border-bottom: 0; }
 .task:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
@@ -324,7 +327,8 @@ ul { list-style: none; margin: 0; padding: 0; }
 .task:hover .drag-handle, .drag-handle:focus-visible { opacity: 1; }
 .drag-handle:hover { background: var(--bg-sunken); color: var(--text-dim); }
 .drag-handle:active { cursor: grabbing; }
-/* На тач-экранах наведения нет — ручка всегда видна. */
+/* На тач-экранах наведения нет — ручка всегда видна. Строку там можно тянуть
+   и за любое место, но ручка берёт её сразу, без удержания. */
 @media (hover: none) { .drag-handle { opacity: .6; } }
 [data-no-drag] .drag-handle { display: none; }
 

@@ -147,7 +147,7 @@ function taskRow(task) {
   if (task.gcal?.error) meta.push(h('span', { class: 'syncerr', title: task.gcal.error }, '⚠ Google'));
   else if (task.gcal?.eventId) meta.push(h('span', { class: 'synced', title: 'В Google Calendar' }, '◉'));
 
-  return h('li', {
+  const li = h('li', {
     class: `task${task.done ? ' done' : ''}`,
     dataset: { id: task.id, p: String(task.priority) },
   },
@@ -161,6 +161,9 @@ function taskRow(task) {
       meta.length ? h('div', { class: 'task-meta' }, ...meta) : null),
     h('button', { class: 'task-open', 'aria-label': `Открыть: ${task.title}`, onclick: () => openEditor(task.id) }, 'открыть'),
     dragHandle(task));
+
+  li.addEventListener('pointerdown', (e) => onRowDown(e, li, false));
+  return li;
 }
 
 function handleToggle(id) {
@@ -177,12 +180,21 @@ function handleToggle(id) {
  * Своя реализация вместо HTML5 drag-and-drop: на тач-экранах он не работает,
  * а приложение ставится как PWA. Тянем на Pointer Events, оригинальная строка
  * остаётся в потоке как метка места вставки, за пальцем/курсором летит копия.
+ *
+ * Тянуть можно за любое место строки, но строка уже занята двумя жестами:
+ * кликом (открыть задачу) и вертикальным свайпом (прокрутить список). Поэтому
+ * намерение определяем по вводу, а не по зоне: мышью перетаскивание начинается
+ * после сдвига на DRAG_START_PX, пальцем — только после удержания, иначе любая
+ * прокрутка утаскивала бы задачу. Ручка `⠿` остаётся: она берёт строку сразу,
+ * без удержания, и даёт клавиатурный доступ через ↑/↓.
  */
 
 let drag = null;            // активная сессия перетаскивания
 let focusHandle = null;     // задача, чью ручку вернуть в фокус после перерисовки
 
-const DRAG_START_PX = 5;    // порог, после которого считаем это перетаскиванием
+const DRAG_START_PX = 5;    // порог мышью, после которого считаем это перетаскиванием
+const HOLD_MS = 350;        // сколько держать палец на строке, прежде чем она «оторвётся»
+const HOLD_SLOP_PX = 10;    // сдвиг пальца до срабатывания удержания — это прокрутка
 const EDGE_PX = 70;         // зона автопрокрутки у краёв списка
 const EDGE_SPEED = 14;      // максимальная скорость автопрокрутки, px/кадр
 
@@ -192,51 +204,85 @@ function dragHandle(task) {
   const btn = h('button', {
     class: 'drag-handle',
     'aria-label': `Переместить: ${task.title || 'без названия'}`,
-    title: 'Тяните, чтобы изменить порядок или дату (↑/↓ с клавиатуры)',
+    title: 'Тяните строку в любом месте, чтобы изменить порядок или дату (↑/↓ с клавиатуры)',
   }, '⠿');
-  btn.addEventListener('pointerdown', (e) => onHandleDown(e, btn));
+  // Ручка перехватывает событие у строки: за неё берём сразу, без удержания.
+  btn.addEventListener('pointerdown', (e) => { e.stopPropagation(); onRowDown(e, btn.closest('li.task'), true); });
   btn.addEventListener('keydown', (e) => onHandleKey(e, btn));
   return btn;
 }
 
-function onHandleDown(e, handle) {
+function onRowDown(e, li, fromHandle) {
   if (drag || (e.button ?? 0) > 0) return;
-  const li = handle.closest('li.task');
   const list = li?.parentElement;
   if (!li || !list || list.dataset.noDrag) return;
+  // Кружок «готово» — только переключатель: дрогнувшая на нём рука
+  // не должна утаскивать задачу вместо отметки.
+  if (!fromHandle && e.target.closest?.('.check')) return;
 
-  // Слушаем окно, а не саму ручку: pointer capture в Chromium слетает,
-  // как только захвативший элемент перестаёт отрисовываться.
-  e.preventDefault();
+  // Пальцем по строке ждём удержания, мышью и за ручку — обычный порог сдвига.
+  const hold = e.pointerType === 'touch' && !fromHandle;
   const start = { x: e.clientX, y: e.clientY, id: e.pointerId };
   let started = false;
+  let timer = 0;
+
+  // Слушаем окно, а не саму строку: pointer capture в Chromium слетает,
+  // как только захвативший элемент перестаёт отрисовываться.
+  if (fromHandle) e.preventDefault();
+
+  const cleanup = () => {
+    clearTimeout(timer);
+    timer = 0;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', cancel);
+  };
+
+  const begin = (ev) => { started = true; beginDrag(li, ev, e.pointerType === 'touch'); };
 
   const move = (ev) => {
     if (ev.pointerId !== start.id) return;
     if (!started) {
-      if (Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) < DRAG_START_PX) return;
-      started = true;
-      beginDrag(li, ev);
+      const dist = Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y);
+      // Палец поехал раньше, чем сработало удержание, — это прокрутка списка,
+      // и дальше она не наша: снимаем слушатели и не мешаем браузеру.
+      if (hold) { if (dist > HOLD_SLOP_PX) cleanup(); return; }
+      if (dist < DRAG_START_PX) return;
+      begin(ev);
     }
     ev.preventDefault();
     moveDrag(ev);
   };
   const stop = (commitDrop) => (ev) => {
     if (ev.pointerId !== start.id) return;
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-    window.removeEventListener('pointercancel', cancel);
-    if (started) endDrag(commitDrop);
+    cleanup();
+    if (!started) return;
+    endDrag(commitDrop);
+    // Отпускание после перетаскивания браузер завершает кликом, а вся строка —
+    // кнопка «открыть»: без этого поверх броска раскрылся бы редактор.
+    suppressNextClick();
   };
   const up = stop(true);
   const cancel = stop(false);
+
+  if (hold) timer = setTimeout(() => { timer = 0; begin(e); }, HOLD_MS);
 
   window.addEventListener('pointermove', move, { passive: false });
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', cancel);
 }
 
-function beginDrag(li, ev) {
+function suppressNextClick() {
+  const kill = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+  window.addEventListener('click', kill, { capture: true, once: true });
+  // Клика может и не быть — например, после pointercancel. Снимаем сторожа сами.
+  setTimeout(() => window.removeEventListener('click', kill, true), 0);
+}
+
+/** Пока тянем пальцем, гасим прокрутку и вызов контекстного меню по долгому нажатию. */
+const blockDefault = (e) => e.preventDefault();
+
+function beginDrag(li, ev, touch) {
   const rect = li.getBoundingClientRect();
   const ghost = li.cloneNode(true);
   ghost.classList.add('drag-ghost');
@@ -245,9 +291,11 @@ function beginDrag(li, ev) {
 
   li.classList.add('drag-src');
   document.body.classList.add('is-dragging');
+  // Мышь к этому моменту уже могла начать выделять текст строки.
+  window.getSelection()?.removeAllRanges();
 
   drag = {
-    li, ghost,
+    li, ghost, touch,
     fromList: li.parentElement,
     startNext: li.nextElementSibling,
     dx: ev.clientX - rect.left,
@@ -255,6 +303,15 @@ function beginDrag(li, ev) {
     x: ev.clientX, y: ev.clientY,
     scrollBy: 0,
   };
+
+  if (touch) {
+    // touch-action у строки оставлен свободным, иначе список нельзя было бы
+    // прокрутить пальцем. Значит, прокрутку на время перетаскивания глушим
+    // сами — палец к этому моменту стоял неподвижно, и браузер её ещё не начал.
+    window.addEventListener('touchmove', blockDefault, { passive: false });
+    window.addEventListener('contextmenu', blockDefault, true);
+    navigator.vibrate?.(10);
+  }
   requestAnimationFrame(scrollTick);
 }
 
@@ -308,6 +365,10 @@ function endDrag(commitDrop) {
   d.ghost.remove();
   d.li.classList.remove('drag-src');
   document.body.classList.remove('is-dragging');
+  if (d.touch) {
+    window.removeEventListener('touchmove', blockDefault);
+    window.removeEventListener('contextmenu', blockDefault, true);
+  }
 
   const toList = d.li.parentElement;
   const moved = toList !== d.fromList || d.li.nextElementSibling !== d.startNext;

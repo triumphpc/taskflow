@@ -22,7 +22,7 @@ same list follows you from your Mac to your iPhone.
 - **Due date and time:** quick buttons — Today / Tomorrow / In 2 days / Next week — alongside plain date and time fields.
 - **Recurrence:** daily, weekly, or monthly, with an interval and a time of day. Marking a task done moves it to the next date in the series and resets its subtasks.
 - **Priorities:** P1 urgent and important, P2 important and not urgent, P3 urgent and not important, P4 neither.
-- **Drag and drop:** grab the `⠿` handle on the right of a row with a mouse or a finger. Dropping inside a group reorders it; dropping into another group reschedules the task — drop it on "Tomorrow" and it moves to tomorrow, drop it on "No date" and the due date is cleared. Keyboard works too: `Tab` to the handle, then `↑` / `↓`.
+- **Drag and drop:** grab a task anywhere on its row. With a mouse, just drag; with a finger, press and hold until the row lifts (a short swipe still scrolls the list). The `⠿` handle on the right picks the row up immediately, without the hold. Dropping inside a group reorders it; dropping into another group reschedules the task — drop it on "Tomorrow" and it moves to tomorrow, drop it on "No date" and the due date is cleared. Keyboard works too: `Tab` to the handle, then `↑` / `↓`.
 - **List order:** automatic by default (by time, then by priority). The first drag pins a manual order; the `⇅` button in the header (or the `s` key) switches back.
 - **Moments** — a daily planning pass: the app walks through everything sitting on today (overdue, due today, and undated) and asks, for each task, a priority and a slot — today (morning / noon / afternoon / evening), tomorrow, in 2 days, next week, or no date. "Already done" and "Not relevant" are there too.
 - **Google Calendar:** tasks with a due date become events in a dedicated "TaskFlow" calendar. Recurring tasks are exported as recurring events (RRULE). Completing or deleting a task removes its event.
@@ -334,7 +334,10 @@ Manual order is kept in the task's `order` field. While automatic mode is on the
 field is unused; on the first drag the current list order is written into `order`
 so nothing jumps, and from then on it is authoritative. Drag and drop is built on
 Pointer Events rather than HTML5 drag-and-drop — otherwise it would not work on
-touch screens.
+touch screens. The whole row is draggable, but that row is already claimed by a
+click (open the task) and by a vertical swipe (scroll the list), so intent is
+read from the input method: a mouse starts dragging after 5 px of movement, a
+finger only after a 350 ms hold.
 
 ---
 
