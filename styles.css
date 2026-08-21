@@ -219,16 +219,19 @@ ul { list-style: none; margin: 0; padding: 0; }
   border-radius: var(--radius); padding: 10px 12px; margin-bottom: 14px;
   box-shadow: var(--shadow);
 }
-.composer input {
+.composer textarea {
   flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: 15px;
+  /* textarea ради переводов строк; вид должен остаться как у обычного поля */
+  font: inherit; font-size: 15px; line-height: 1.4; resize: none; overflow: hidden;
+  padding: 0; max-height: 40vh;
 }
-.composer input::placeholder { color: var(--text-faint); }
+.composer textarea::placeholder { color: var(--text-faint); }
 .composer .plus {
-  width: 22px; height: 22px; border-radius: 50%; flex: none;
+  width: 22px; height: 22px; border-radius: 50%; flex: none; align-self: flex-start; margin-top: 1px;
   display: grid; place-items: center; font-size: 16px; line-height: 1;
   background: var(--accent); color: #fff; border: 0;
 }
-.composer-hint { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; }
+.composer-hint { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; align-self: flex-start; margin-top: 2px; }
 @media (max-width: 620px) { .composer-hint { display: none; } }
 
 /* ---------- Список задач ---------- */
@@ -286,7 +289,13 @@ ul { list-style: none; margin: 0; padding: 0; }
 .task.done .check::after { opacity: 1; }
 
 .task-body { flex: 1; min-width: 0; }
-.task-title { word-break: break-word; }
+.task-title {
+  word-break: break-word;
+  /* Переводы строк из названия видны; длинный текст обрезаем тремя строками,
+     иначе одна задача занимает пол-экрана. Полностью — в карточке. */
+  white-space: pre-wrap;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
 .task.done .task-title { color: var(--text-faint); text-decoration: line-through; }
 
 .task-meta {
@@ -437,7 +446,11 @@ body.is-dragging .task-open { pointer-events: none; }
 }
 .input:focus, .textarea:focus, .select:focus { border-color: var(--accent); }
 .textarea { resize: vertical; min-height: 74px; line-height: 1.5; }
-.input-title { font-size: 17px; font-weight: 600; padding: 6px 0; border: 0; background: transparent; }
+.input-title {
+  font: inherit; font-size: 17px; font-weight: 600; line-height: 1.35;
+  padding: 6px 0; border: 0; background: transparent;
+  resize: none; overflow: hidden; min-height: 0;
+}
 .input-title:focus { border: 0; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .row > * { flex: 1; min-width: 130px; }
@@ -485,7 +498,11 @@ body.is-dragging .task-open { pointer-events: none; }
 .moments-progress { height: 3px; background: var(--line-soft); border-radius: 3px; overflow: hidden; margin-bottom: 16px; }
 .moments-progress i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
 .moments-task { margin-bottom: 18px; }
-.moments-task h3 { font-size: 18px; font-weight: 640; line-height: 1.3; word-break: break-word; }
+.moments-task h3 {
+  font-size: 18px; font-weight: 640; line-height: 1.3; word-break: break-word;
+  white-space: pre-wrap;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
+}
 .moments-task .notes { font-size: 13px; color: var(--text-dim); margin-top: 6px; white-space: pre-wrap; }
 .moments-task .cur { font-size: 12px; color: var(--text-faint); margin-top: 7px; }
 .when-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
@@ -616,7 +633,7 @@ body.is-dragging .task-open { pointer-events: none; }
   .composer { padding: 13px 14px; }
   /* Ровно 17px, а не 15: Safari на iOS увеличивает всю страницу при фокусе
      на поле мельче 16px — экран дёргался при каждом добавлении задачи. */
-  .composer input { font-size: 17px; }
+  .composer textarea { font-size: 17px; }
   .composer .plus { width: 27px; height: 27px; font-size: 20px; }
 
   .task { padding: 14px 13px 14px 0; gap: 13px; }

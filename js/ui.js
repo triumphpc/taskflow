@@ -1,7 +1,7 @@
 // Отрисовка интерфейса: навигация, списки, редактор задачи, настройки, календарь.
 
 import { $, h, clear, append, todayStr, addDaysStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
-  combineDue, plural, debounce } from './util.js';
+  combineDue, plural, debounce, oneLine } from './util.js';
 import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
 import * as S from './sync.js';
 import * as M from './model.js';
@@ -159,7 +159,7 @@ function taskRow(task) {
     h('div', { class: 'task-body' },
       h('div', { class: 'task-title' }, task.title || 'Без названия'),
       meta.length ? h('div', { class: 'task-meta' }, ...meta) : null),
-    h('button', { class: 'task-open', 'aria-label': `Открыть: ${task.title}`, onclick: () => openEditor(task.id) }, 'открыть'),
+    h('button', { class: 'task-open', 'aria-label': `Открыть: ${oneLine(task.title)}`, onclick: () => openEditor(task.id) }, 'открыть'),
     dragHandle(task));
 
   li.addEventListener('pointerdown', (e) => onRowDown(e, li, false));
@@ -203,7 +203,7 @@ const listIds = (list) => Array.from(list.children).map((el) => el.dataset.id).f
 function dragHandle(task) {
   const btn = h('button', {
     class: 'drag-handle',
-    'aria-label': `Переместить: ${task.title || 'без названия'}`,
+    'aria-label': `Переместить: ${oneLine(task.title) || 'без названия'}`,
     title: 'Тяните строку в любом месте, чтобы изменить порядок или дату (↑/↓ с клавиатуры)',
   }, '⠿');
   // Ручка перехватывает событие у строки: за неё берём сразу, без удержания.
@@ -472,9 +472,17 @@ function defaultDateForView(view) {
   return null;
 }
 
+/** Подгоняет высоту textarea под содержимое: одна строка — одна строка. */
+function autoGrow(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+
 function composer() {
-  const input = h('input', {
-    type: 'text',
+  // Именно textarea, а не input: input по спецификации вырезает переводы строк,
+  // и вставленный многострочный текст молча схлопывался бы в одну строку.
+  const input = h('textarea', {
+    rows: '1',
     // На узком экране длинная подсказка всё равно обрезается на полуслове,
     // а рядом с ней ещё и скрыт хинт «Enter — добавить».
     placeholder: window.innerWidth <= 620
@@ -483,6 +491,7 @@ function composer() {
     'aria-label': 'Новая задача',
     autocomplete: 'off',
   });
+  input.addEventListener('input', () => autoGrow(input));
 
   const submit = () => {
     const value = input.value.trim();
@@ -491,20 +500,24 @@ function composer() {
     if (!parsed.title) return;
     const task = M.createTask(parsed);
     input.value = '';
+    autoGrow(input);
     scheduleSync();
     toast('Задача добавлена', { actionLabel: 'Открыть', action: () => openEditor(task.id) });
   };
 
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  // Enter добавляет задачу, Shift+Enter — перенос строки внутри названия.
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
 
   return h('div', { class: 'composer' },
     h('button', { class: 'plus', 'aria-label': 'Добавить', onclick: submit }, '+'),
     input,
-    h('span', { class: 'composer-hint' }, 'Enter — добавить'));
+    h('span', { class: 'composer-hint' }, 'Enter — добавить, ⇧Enter — перенос'));
 }
 
 export function focusComposer() {
-  const input = $('.composer input');
+  const input = $('.composer textarea');
   if (!input) return false;
   // Поле ввода живёт внутри прокручиваемого списка: если экран промотан вниз,
   // один только фокус выглядит как «ничего не произошло».
@@ -604,8 +617,10 @@ export function openEditor(taskId) {
   const applyQuiet = debounce((patch) => apply(patch), 400);
 
   // --- Заголовок и заметки
-  const titleInput = h('input', { class: 'input input-title', value: task.title, placeholder: 'Название задачи', 'aria-label': 'Название' });
-  titleInput.addEventListener('input', () => applyQuiet({ title: titleInput.value }));
+  // textarea, чтобы название с переводами строк и показывалось, и правилось как есть.
+  const titleInput = h('textarea', { class: 'input input-title', rows: '1', placeholder: 'Название задачи', 'aria-label': 'Название' });
+  titleInput.value = task.title;
+  titleInput.addEventListener('input', () => { autoGrow(titleInput); applyQuiet({ title: titleInput.value }); });
 
   const notesInput = h('textarea', { class: 'textarea', placeholder: 'Заметки…', 'aria-label': 'Заметки' });
   notesInput.value = task.notes;
@@ -808,14 +823,15 @@ export function openEditor(taskId) {
     if (reason !== 'sync:applied') return;
     if (!M.getTask(taskId)) { sheet.close(); return; }
     reread();
-    if (document.activeElement !== titleInput) titleInput.value = task.title;
+    if (document.activeElement !== titleInput) { titleInput.value = task.title; autoGrow(titleInput); }
     if (document.activeElement !== notesInput) notesInput.value = task.notes;
     renderPrio();
     if (!subWrap.contains(document.activeElement)) renderSubs();
     syncDateInputs();
   });
 
-  setTimeout(() => { if (!task.title) titleInput.focus(); }, 40);
+  // scrollHeight имеет смысл только когда элемент уже в документе.
+  setTimeout(() => { autoGrow(titleInput); if (!task.title) titleInput.focus(); }, 40);
   return sheet;
 }
 

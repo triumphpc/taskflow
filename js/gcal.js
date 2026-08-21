@@ -273,8 +273,13 @@ export function buildEvent(task) {
   descLines.push(`Приоритет: ${['', 'P1 срочно и важно', 'P2 важно, не срочно', 'P3 срочно, не важно', 'P4 не важно, не срочно'][task.priority]}`);
   descLines.push('— TaskFlow');
 
+  // Название задачи может быть многострочным, а summary события — одна строка.
+  // Первую строку берём заголовком, остальные не теряем — уводим в описание.
+  const [firstLine, ...restLines] = (task.title || 'Без названия').split('\n');
+  if (restLines.some((l) => l.trim())) descLines.unshift(...restLines, '');
+
   const body = {
-    summary: (task.priority <= 2 ? `[P${task.priority}] ` : '') + (task.title || 'Без названия'),
+    summary: (task.priority <= 2 ? `[P${task.priority}] ` : '') + (firstLine.trim() || 'Без названия'),
     description: descLines.join('\n'),
     colorId: PRIO_COLOR[task.priority],
     extendedProperties: { private: { taskflowId: task.id } },

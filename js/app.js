@@ -1,7 +1,7 @@
 // Точка входа: загрузка состояния, маршрутизация по разделам, горячие клавиши,
 // напоминания и восстановление сессии Google.
 
-import { $, debounce } from './util.js';
+import { $, debounce, oneLine } from './util.js';
 import { state, load, subscribe } from './store.js';
 import * as M from './model.js';
 import * as G from './gcal.js';
@@ -16,14 +16,23 @@ function viewFromHash() {
   return VALID_VIEWS.includes(id) ? id : 'today';
 }
 
+// Какой раздел уже нарисован. Смена хеша приходит отдельным событием, позже
+// самой смены ctx.view, — а список к тому моменту могли отрисовать вручную
+// (так делает «+», чтобы навести фокус тем же жестом). Повторная отрисовка
+// пересобрала бы DOM и сбросила фокус: на iPhone клавиатура поднималась и
+// сразу опускалась.
+let renderedView = null;
+
+function renderView() { renderedView = ctx.view; render(); }
+
 ctx.setView = (id) => {
   if (!VALID_VIEWS.includes(id)) return;
   ctx.view = id;
   if (location.hash !== `#/${id}`) location.hash = `#/${id}`;
-  else render();
+  else renderView();
 };
 
-ctx.refresh = () => render();
+ctx.refresh = () => renderView();
 
 // ---------- Напоминания ----------
 
@@ -33,7 +42,7 @@ function tickReminders() {
 
   for (const task of M.dueReminders()) {
     try {
-      const n = new Notification(task.title || 'Задача', {
+      const n = new Notification(oneLine(task.title) || 'Задача', {
         body: [M.PRIORITIES[task.priority].code, task.notes?.slice(0, 80)].filter(Boolean).join(' · '),
         tag: 'taskflow-' + task.id,
         icon: 'icons/apple-touch-icon.png',
@@ -78,7 +87,10 @@ function init() {
   ctx.view = viewFromHash();
   if (!location.hash) location.hash = `#/${ctx.view}`;
 
-  window.addEventListener('hashchange', () => { ctx.view = viewFromHash(); render(); });
+  window.addEventListener('hashchange', () => {
+    ctx.view = viewFromHash();
+    if (renderedView !== ctx.view) renderView();
+  });
 
   // Перерисовка на изменения состояния — с небольшим сглаживанием,
   // чтобы серия правок не дёргала список.
@@ -117,7 +129,7 @@ function init() {
 
   document.addEventListener('keydown', onKeydown);
 
-  render();
+  renderView();
 
   // Ищем сервер синхронизации и сразу подтягиваем общий список.
   S.probe().then((ok) => {

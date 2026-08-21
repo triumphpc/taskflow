@@ -138,6 +138,12 @@ export function daysBetween(aStr, bStr) {
   return Math.round((fromDateStr(bStr) - fromDateStr(aStr)) / 86400000);
 }
 
+/** Схлопывает многострочный текст в одну строку — для мест, где перенос неуместен
+ *  (заголовок уведомления, aria-label, summary события). */
+export function oneLine(text) {
+  return String(text ?? '').replace(/\s*\n+\s*/g, ' ').trim();
+}
+
 export function plural(n, one, few, many) {
   const m10 = n % 10, m100 = n % 100;
   if (m10 === 1 && m100 !== 11) return one;
