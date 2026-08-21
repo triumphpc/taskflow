@@ -573,7 +573,7 @@ body.is-dragging .task-open { pointer-events: none; }
 
   .topbar { padding: calc(14px + var(--safe-t)) 16px 10px; }
   .topbar-title h1 { font-size: 20px; }
-  .content { padding: 14px 16px calc(148px + var(--safe-b)); }
+  .content { padding: 14px 16px calc(164px + var(--safe-b)); }
   .banner { margin: 10px 16px 0; }
 
   .tabbar {
@@ -600,9 +600,44 @@ body.is-dragging .task-open { pointer-events: none; }
     background: var(--accent); color: #fff; font-size: 27px; line-height: 1; font-weight: 300;
     box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 45%, transparent);
   }
-  .toast-root { bottom: calc(140px + var(--safe-b)); }
+  .toast-root { bottom: calc(152px + var(--safe-b)); }
   .prio-grid { grid-template-columns: 1fr; }
   .when-grid { grid-template-columns: 1fr; }
+
+  /* Пальцем целиться труднее, чем курсором, и держат телефон дальше от глаз,
+     чем смотрят в монитор. На узких экранах увеличиваем и текст, и иконки,
+     и сами зоны нажатия. Настольной вёрстки это не касается. */
+  body { font-size: 16.5px; }
+
+  .topbar-title h1 { font-size: 23px; }
+  .topbar-title p { font-size: 13.5px; }
+  .icon-btn { width: 40px; height: 40px; font-size: 19px; }
+
+  .composer { padding: 13px 14px; }
+  /* Ровно 17px, а не 15: Safari на iOS увеличивает всю страницу при фокусе
+     на поле мельче 16px — экран дёргался при каждом добавлении задачи. */
+  .composer input { font-size: 17px; }
+  .composer .plus { width: 27px; height: 27px; font-size: 20px; }
+
+  .task { padding: 14px 13px 14px 0; gap: 13px; }
+  .task-title { font-size: 16.5px; }
+  .task-meta { font-size: 13px; gap: 5px 10px; margin-top: 4px; }
+  .task-meta .chip-p { font-size: 11.5px; padding: 2px 6px; }
+  .check { width: 24px; height: 24px; border-width: 2px; }
+  .check::after { width: 13px; height: 13px; background-size: 13px 13px; }
+  .drag-handle { width: 34px; height: 34px; font-size: 19px; }
+
+  .group-head { font-size: 13px; }
+  .empty .big { font-size: 42px; }
+  .empty p { font-size: 15px; }
+
+  .tabbar .nav-item { font-size: 11.5px; padding: 7px 2px; gap: 3px; }
+  .tabbar .nav-item .ico { font-size: 22px; }
+
+  .fab {
+    width: 60px; height: 60px; font-size: 32px;
+    bottom: calc(82px + var(--safe-b)); right: 18px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

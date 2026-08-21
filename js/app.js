@@ -58,7 +58,7 @@ function onKeydown(e) {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
 
-  if (e.key === 'n') { e.preventDefault(); if (!focusComposer()) { ctx.setView('today'); setTimeout(focusComposer, 60); } }
+  if (e.key === 'n') { e.preventDefault(); if (!focusComposer()) { ctx.setView('today'); ctx.refresh(); focusComposer(); } }
   else if (e.key === 'm') { e.preventDefault(); openMoments(); }
   else if (e.key === ',') { e.preventDefault(); openSettings(); }
   else if (e.key === '1') ctx.setView('today');
@@ -96,8 +96,15 @@ function init() {
   $('#btn-sort').addEventListener('click', toggleSortMode);
   $('#btn-cloud').addEventListener('click', syncDevicesNow);
   $('#btn-fab').addEventListener('click', () => {
-    if (ctx.view === 'calendar' || ctx.view === 'done') ctx.setView('today');
-    setTimeout(() => { if (!focusComposer()) return; }, 60);
+    // Фокус только синхронно, внутри самого жеста: iOS поднимает клавиатуру
+    // лишь в этом случае, а из setTimeout молча ничего не делает.
+    if (focusComposer()) return;
+    // На «Календаре» и «Выполнено» поля ввода нет. Смена раздела перерисовывает
+    // список через hashchange, то есть позже, — рисуем сразу, чтобы успеть
+    // навести фокус тем же жестом.
+    ctx.setView('today');
+    ctx.refresh();
+    focusComposer();
   });
 
   $('#btn-sync').addEventListener('click', async () => {

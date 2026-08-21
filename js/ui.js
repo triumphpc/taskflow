@@ -2,7 +2,7 @@
 
 import { $, h, clear, append, todayStr, addDaysStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
   combineDue, plural, debounce } from './util.js';
-import { state, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
+import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
 import * as S from './sync.js';
 import * as M from './model.js';
 import * as G from './gcal.js';
@@ -475,7 +475,11 @@ function defaultDateForView(view) {
 function composer() {
   const input = h('input', {
     type: 'text',
-    placeholder: 'Новая задача…  («завтра 18:30 !1» тоже понимается)',
+    // На узком экране длинная подсказка всё равно обрезается на полуслове,
+    // а рядом с ней ещё и скрыт хинт «Enter — добавить».
+    placeholder: window.innerWidth <= 620
+      ? 'Новая задача…  («завтра 18:30 !1»)'
+      : 'Новая задача…  («завтра 18:30 !1» тоже понимается)',
     'aria-label': 'Новая задача',
     autocomplete: 'off',
   });
@@ -501,8 +505,12 @@ function composer() {
 
 export function focusComposer() {
   const input = $('.composer input');
-  if (input) { input.focus(); return true; }
-  return false;
+  if (!input) return false;
+  // Поле ввода живёт внутри прокручиваемого списка: если экран промотан вниз,
+  // один только фокус выглядит как «ничего не произошло».
+  input.scrollIntoView({ block: 'nearest' });
+  input.focus();
+  return true;
 }
 
 // ---------- Разделы со списками ----------
@@ -584,8 +592,13 @@ export function scheduleSync() { runSync(); }
 // ---------- Редактор задачи ----------
 
 export function openEditor(taskId) {
-  const task = M.getTask(taskId);
+  let task = M.getTask(taskId);
   if (!task) return;
+
+  // Обмен с сервером подменяет state.tasks целиком (sync.js), поэтому держать
+  // ссылку на объект нельзя: после первого же обмена редактор рисовал бы
+  // устаревший снимок — приоритет не подсвечивался, подзадачи не появлялись.
+  const reread = () => { task = M.getTask(taskId) || task; return task; };
 
   const apply = (patch) => { M.updateTask(task.id, patch); ctx.refresh(); scheduleSync(); };
   const applyQuiet = debounce((patch) => apply(patch), 400);
@@ -601,6 +614,7 @@ export function openEditor(taskId) {
   // --- Приоритет
   const prioWrap = h('div', { class: 'prio-grid' });
   const renderPrio = () => {
+    reread();
     clear(prioWrap);
     for (const p of Object.values(M.PRIORITIES)) {
       prioWrap.append(h('button', {
@@ -623,6 +637,7 @@ export function openEditor(taskId) {
   const quickWrap = h('div', { class: 'chips', style: { marginBottom: '8px' } });
 
   const syncDateInputs = () => {
+    reread();
     dateInput.value = datePart(task.due) || '';
     timeInput.value = timePart(task.due) || '';
     renderRepeat();
@@ -652,6 +667,7 @@ export function openEditor(taskId) {
   // --- Повтор
   const repeatWrap = h('div');
   function renderRepeat() {
+    reread();
     clear(repeatWrap);
     const freqSelect = h('select', { class: 'select', 'aria-label': 'Повтор' },
       h('option', { value: '' }, 'Не повторять'),
@@ -709,6 +725,7 @@ export function openEditor(taskId) {
   // --- Подзадачи
   const subWrap = h('div', { class: 'subtasks' });
   function renderSubs() {
+    reread();
     clear(subWrap);
     for (const s of task.subtasks) {
       const title = h('input', { class: 'st-title', value: s.title, 'aria-label': 'Подзадача' });
@@ -782,7 +799,20 @@ export function openEditor(taskId) {
       }, task.done ? 'Вернуть в работу' : 'Выполнено'),
       h('button', { class: 'btn btn-primary', onclick: () => sheet.close() }, 'Готово'),
     ],
-    onClose: () => ctx.refresh(),
+    onClose: () => { unsubscribe(); ctx.refresh(); },
+  });
+
+  // Правки с другого устройства должны доезжать до открытого редактора.
+  // Поля, в которых сейчас печатают, не трогаем — иначе курсор прыгнет.
+  const unsubscribe = subscribe((reason) => {
+    if (reason !== 'sync:applied') return;
+    if (!M.getTask(taskId)) { sheet.close(); return; }
+    reread();
+    if (document.activeElement !== titleInput) titleInput.value = task.title;
+    if (document.activeElement !== notesInput) notesInput.value = task.notes;
+    renderPrio();
+    if (!subWrap.contains(document.activeElement)) renderSubs();
+    syncDateInputs();
   });
 
   setTimeout(() => { if (!task.title) titleInput.focus(); }, 40);
