@@ -319,6 +319,30 @@ ul { list-style: none; margin: 0; padding: 0; }
   font: inherit; color: transparent; text-align: left;
 }
 
+/* ---------- Быстрый перенос даты ---------- */
+
+.snooze {
+  /* поверх .task-open, растянутой на всю строку */
+  position: relative; z-index: 2;
+  display: flex; gap: 4px; flex: none; align-self: center;
+}
+.snooze-btn {
+  width: 26px; height: 26px; padding: 0; flex: none;
+  border: 1px solid var(--line); border-radius: 50%;
+  background: transparent; color: var(--text-faint);
+  font: inherit; font-size: 12.5px; line-height: 1;
+  display: grid; place-items: center;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.snooze-btn:hover { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.snooze-btn:active { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+/* Кружки соперничают за место с названием: пока на строку не навели,
+   держим их приглушёнными, чтобы список читался как список. */
+@media (hover: hover) {
+  .snooze { opacity: .35; transition: opacity .12s; }
+  .task:hover .snooze, .snooze:focus-within { opacity: 1; }
+}
+
 /* ---------- Перетаскивание задач ---------- */
 
 .drag-handle {
@@ -587,6 +611,10 @@ body.is-dragging .task-open { pointer-events: none; }
 @media (max-width: 820px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
+
+  /* Кружки переноса — цель для пальца, а не для курсора. */
+  .snooze { gap: 5px; }
+  .snooze-btn { width: 32px; height: 32px; font-size: 14px; }
 
   .topbar { padding: calc(14px + var(--safe-t)) 16px 10px; }
   .topbar-title h1 { font-size: 20px; }

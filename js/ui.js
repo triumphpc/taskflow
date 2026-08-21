@@ -129,6 +129,28 @@ function subtitleFor(view) {
 
 // ---------- Строка задачи ----------
 
+/** Три кружка быстрого переноса прямо в строке: одно касание — и задача уехала
+ *  на другой день, без открытия карточки. «Пн» — ближайший понедельник. */
+const SNOOZE = [
+  ['\u2192', 'Завтра', () => M.QUICK_DATES.tomorrow()],
+  ['\u00bb', 'Через 2 дня', () => M.QUICK_DATES.in2days()],
+  ['Пн', 'Следующая неделя', () => M.QUICK_DATES.nextWeek()],
+];
+
+function snoozeButtons(task) {
+  return h('div', { class: 'snooze' }, ...SNOOZE.map(([glyph, label, when]) => h('button', {
+    class: 'snooze-btn',
+    title: `Перенести: ${label.toLowerCase()}`,
+    'aria-label': `Перенести на ${label.toLowerCase()}: ${oneLine(task.title) || 'без названия'}`,
+    onclick: (e) => {
+      e.stopPropagation();
+      M.scheduleTask(task.id, when());
+      toast(`Перенесено: ${label.toLowerCase()}`);
+      scheduleSync();
+    },
+  }, glyph)));
+}
+
 function taskRow(task) {
   const dueStr = task.due ? fmtDue(task.due) : '';
   const overdue = !task.done && M.isOverdue(task.due);
@@ -160,6 +182,7 @@ function taskRow(task) {
       h('div', { class: 'task-title' }, task.title || 'Без названия'),
       meta.length ? h('div', { class: 'task-meta' }, ...meta) : null),
     h('button', { class: 'task-open', 'aria-label': `Открыть: ${oneLine(task.title)}`, onclick: () => openEditor(task.id) }, 'открыть'),
+    task.done ? null : snoozeButtons(task),
     dragHandle(task));
 
   li.addEventListener('pointerdown', (e) => onRowDown(e, li, false));
@@ -218,7 +241,7 @@ function onRowDown(e, li, fromHandle) {
   if (!li || !list || list.dataset.noDrag) return;
   // Кружок «готово» — только переключатель: дрогнувшая на нём рука
   // не должна утаскивать задачу вместо отметки.
-  if (!fromHandle && e.target.closest?.('.check')) return;
+  if (!fromHandle && e.target.closest?.('.check, .snooze')) return;
 
   // Пальцем по строке ждём удержания, мышью и за ручку — обычный порог сдвига.
   const hold = e.pointerType === 'touch' && !fromHandle;
