@@ -240,7 +240,12 @@ const byPriorityThenTime = (a, b) => {
   return (a.order || 0) - (b.order || 0);
 };
 
+// Сначала дата, потом время внутри дня, потом приоритет. Дату сравнивать
+// обязательно: группы «Просрочено» и «Позже» собирают разные дни, и без этого
+// они выстраивались по одному приоритету — то есть в порядке добавления.
 const byTimeThenPriority = (a, b) => {
+  const da = datePart(a.due), db = datePart(b.due);
+  if (da && db && da !== db) return da < db ? -1 : 1;
   const ta = timePart(a.due), tb = timePart(b.due);
   if (ta && tb && ta !== tb) return ta < tb ? -1 : 1;
   if (ta && !tb) return -1;
