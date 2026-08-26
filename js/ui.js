@@ -672,8 +672,14 @@ export function openEditor(taskId) {
   };
 
   notesView.addEventListener('click', (e) => {
-    // По ссылке — открыть её, а не начать правку.
-    if (e.target.closest('a')) return;
+    // По ссылке — открыть её, а не начать правку. На тач-экранах click нередко
+    // приходит с target самого блока, а не ссылки, поэтому смотрим ещё и на то,
+    // что лежит под точкой нажатия. Без этой проверки тап по ссылке в карточке
+    // открывал правку, а сама ссылка не срабатывала.
+    if (e.target.closest?.('a')) return;
+    const overLink = (e.clientX || e.clientY)
+      && document.elementFromPoint(e.clientX, e.clientY)?.closest?.('a');
+    if (overLink) { overLink.click(); return; }
     editNotes(caretIndexAt(notesView, e.clientX, e.clientY));
   });
   // С клавиатуры правка открывается явным Enter или пробелом. По самому фокусу её

@@ -213,7 +213,18 @@ export function linkify(text) {
       href: l.href,
       target: '_blank',
       rel: 'noopener noreferrer',
-      onclick: (e) => e.stopPropagation(),
+      // Переход делаем сами, а не полагаемся на обработку target="_blank"
+      // браузером: в установленном PWA его глушит блокировщик всплывающих окон,
+      // а в заметках вид со ссылками прячется прямо в обработчике нажатия —
+      // браузер успевает отменить переход. Если открыть вкладку не дали,
+      // уходим по адресу в текущем окне.
+      onclick: (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const win = window.open(l.href, '_blank');
+        if (win) { try { win.opener = null; } catch { /* другой источник */ } }
+        else location.href = l.href;
+      },
       onpointerdown: (e) => e.stopPropagation(),
     }, l.raw));
     pos = l.end;
