@@ -150,3 +150,82 @@ export function plural(n, one, few, many) {
   if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
   return many;
 }
+
+// ---------- Ссылки внутри текста ----------
+
+// Ловим и полные адреса, и голые «www.». Пробелы, угловые скобки и кавычки
+// в адрес не входят — на них выражение и останавливается.
+const URL_SRC = "(?:https?://|www\\.)[^\\s<>\"'«»]+";
+
+// Знаки препинания, прилипшие к концу адреса: «смотри https://a.b/c, там…»
+const TAIL = /[.,;:!?…"'*_]+$/;
+const PAIRS = { ')': '(', ']': '[', '}': '{', '»': '«' };
+
+/** Отрезает от найденного адреса хвост, который на самом деле принадлежит
+ *  предложению, а не ссылке. Закрывающую скобку оставляем, только если
+ *  открывающая тоже внутри адреса — как в ссылках на вики. */
+function trimTail(raw) {
+  let url = raw.replace(TAIL, '');
+  while (url && PAIRS[url.slice(-1)]) {
+    const close = url.slice(-1);
+    const open = PAIRS[close];
+    if (url.split(open).length >= url.split(close).length) break;
+    url = url.slice(0, -1).replace(TAIL, '');
+  }
+  return url;
+}
+
+/** Находит ссылки в тексте: [{ start, end, raw, href }]. `raw` — как написано
+ *  в тексте, `href` — то, что можно открыть (у «www.» дописан протокол). */
+export function findLinks(text) {
+  const src = String(text ?? '');
+  if (!src) return [];
+  const re = new RegExp(URL_SRC, 'gi');
+  const out = [];
+  for (let m; (m = re.exec(src));) {
+    const raw = trimTail(m[0]);
+    // Голый «www.» считаем адресом, только если за ним есть домен с точкой:
+    // иначе «www.» посреди фразы утащило бы в ссылку соседние слова.
+    if (!/^https?:\/\/[^\s/]/i.test(raw) && !/^www\.[^\s/]+\.[^\s/.]{2}/i.test(raw)) continue;
+    out.push({
+      start: m.index,
+      end: m.index + raw.length,
+      raw,
+      href: /^www\./i.test(raw) ? 'https://' + raw : raw,
+    });
+    re.lastIndex = m.index + m[0].length;
+  }
+  return out;
+}
+
+/** Домен без «www.» — короткая подпись для ссылки в тесном месте (строка списка). */
+export function linkHost(href) {
+  try {
+    return new URL(href).hostname.replace(/^www\./i, '');
+  } catch {
+    return href;
+  }
+}
+
+/** Текст → массив узлов, где адреса стали кликабельными <a>. Остальное
+ *  остаётся текстовыми узлами, поэтому вставлять в DOM безопасно. */
+export function linkify(text) {
+  const src = String(text ?? '');
+  const links = findLinks(src);
+  if (!links.length) return [src];
+  const nodes = [];
+  let pos = 0;
+  for (const l of links) {
+    if (l.start > pos) nodes.push(src.slice(pos, l.start));
+    nodes.push(h('a', {
+      class: 'linkified',
+      href: l.href,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      onclick: (e) => e.stopPropagation(),
+    }, l.raw));
+    pos = l.end;
+  }
+  if (pos < src.length) nodes.push(src.slice(pos));
+  return nodes;
+}

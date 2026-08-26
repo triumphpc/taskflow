@@ -1,7 +1,7 @@
 // Отрисовка интерфейса: навигация, списки, редактор задачи, настройки, календарь.
 
 import { $, h, clear, append, todayStr, addDaysStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
-  combineDue, plural, debounce, oneLine } from './util.js';
+  combineDue, plural, debounce, oneLine, findLinks, linkHost } from './util.js';
 import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
 import * as S from './sync.js';
 import * as M from './model.js';
@@ -151,6 +151,26 @@ function snoozeButtons(task) {
   }, glyph)));
 }
 
+/** Ссылки из заметок, без повторов: один и тот же адрес дважды в строке не нужен. */
+function noteLinks(notes) {
+  const seen = new Set();
+  return findLinks(notes).filter((l) => !seen.has(l.href) && seen.add(l.href));
+}
+
+/** Ссылка в строке списка. Лежит поверх .task-open, поэтому нажатие достаётся ей,
+ *  а не открытию карточки; pointerdown гасим, чтобы не начался перенос задачи. */
+function noteLinkChip(link) {
+  return h('a', {
+    class: 'note-link',
+    href: link.href,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    title: link.href,
+    onclick: (e) => e.stopPropagation(),
+    onpointerdown: (e) => e.stopPropagation(),
+  }, '↗ ' + linkHost(link.href));
+}
+
 function taskRow(task) {
   const dueStr = task.due ? fmtDue(task.due) : '';
   const overdue = !task.done && M.isOverdue(task.due);
@@ -165,6 +185,9 @@ function taskRow(task) {
   if (task.repeat) meta.push(h('span', { class: 'rep' }, '↻ ' + M.repeatLabel(task.repeat)));
   if (task.subtasks.length) meta.push(h('span', null, `☑ ${subDone}/${task.subtasks.length}`));
   if (task.notes) meta.push(h('span', { title: task.notes }, '✎'));
+  // Ссылку из заметок показываем прямо в строке: одно касание — и она открылась,
+  // без захода в карточку. Больше двух в тесную строку не влезает.
+  for (const l of noteLinks(task.notes).slice(0, 2)) meta.push(noteLinkChip(l));
   if (task.priority <= 3) meta.unshift(h('span', { class: 'chip-p' }, M.PRIORITIES[task.priority].code));
   if (task.gcal?.error) meta.push(h('span', { class: 'syncerr', title: task.gcal.error }, '⚠ Google'));
   else if (task.gcal?.eventId) meta.push(h('span', { class: 'synced', title: 'В Google Calendar' }, '◉'));
@@ -241,7 +264,7 @@ function onRowDown(e, li, fromHandle) {
   if (!li || !list || list.dataset.noDrag) return;
   // Кружок «готово» — только переключатель: дрогнувшая на нём рука
   // не должна утаскивать задачу вместо отметки.
-  if (!fromHandle && e.target.closest?.('.check, .snooze')) return;
+  if (!fromHandle && e.target.closest?.('.check, .snooze, .note-link')) return;
 
   // Пальцем по строке ждём удержания, мышью и за ручку — обычный порог сдвига.
   const hold = e.pointerType === 'touch' && !fromHandle;
@@ -647,7 +670,27 @@ export function openEditor(taskId) {
 
   const notesInput = h('textarea', { class: 'textarea', placeholder: 'Заметки…', 'aria-label': 'Заметки' });
   notesInput.value = task.notes;
-  notesInput.addEventListener('input', () => applyQuiet({ notes: notesInput.value }));
+
+  // Внутри textarea ссылка кликабельной не бывает — текст там всегда сырой.
+  // Поэтому адреса из заметок дублируем строкой ниже, уже как ссылки.
+  const notesLinks = h('div', { class: 'note-links' });
+  const renderNoteLinks = () => {
+    clear(notesLinks);
+    const links = noteLinks(notesInput.value);
+    notesLinks.classList.toggle('hidden', !links.length);
+    for (const l of links) {
+      notesLinks.append(h('a', {
+        class: 'note-link-row',
+        href: l.href,
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        title: l.href,
+      }, h('span', { class: 'ico' }, '↗'), h('span', { class: 'lbl' }, l.raw)));
+    }
+  };
+  renderNoteLinks();
+
+  notesInput.addEventListener('input', () => { renderNoteLinks(); applyQuiet({ notes: notesInput.value }); });
 
   // --- Приоритет
   const prioWrap = h('div', { class: 'prio-grid' });
@@ -807,7 +850,7 @@ export function openEditor(taskId) {
     title: 'Задача',
     bodyNodes: [
       h('div', { class: 'field' }, titleInput),
-      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Заметки'), notesInput),
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Заметки'), notesInput, notesLinks),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Подзадачи'), subWrap),
       h('div', { class: 'field' },
         h('span', { class: 'field-label' }, 'Когда'),
@@ -848,6 +891,7 @@ export function openEditor(taskId) {
     reread();
     if (document.activeElement !== titleInput) { titleInput.value = task.title; autoGrow(titleInput); }
     if (document.activeElement !== notesInput) notesInput.value = task.notes;
+    renderNoteLinks();
     renderPrio();
     if (!subWrap.contains(document.activeElement)) renderSubs();
     syncDateInputs();

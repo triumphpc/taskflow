@@ -1,7 +1,7 @@
 // Moments — планирование дня. Проводит по задачам, которые «висят» на сегодня,
 // и для каждой спрашивает: когда делать и какой приоритет.
 
-import { h, clear, fmtDue, fmtDayLabel, fmtDateShort, timePart, combineDue, plural } from './util.js';
+import { h, clear, fmtDue, fmtDayLabel, fmtDateShort, timePart, combineDue, plural, linkify } from './util.js';
 import { state } from './store.js';
 import * as M from './model.js';
 import { openSheet, toast, ctx, scheduleSync, openEditor } from './ui.js';
@@ -12,6 +12,15 @@ const DAY_PARTS = [
   ['afternoon', 'День'],
   ['evening', 'Вечер'],
 ];
+
+/** Заметку в карточке показываем куском. Режем по границе слова: адрес пробелов
+ *  внутри не содержит, поэтому так ссылка на срезе не превратится в битую. */
+function clampNotes(notes, max = 220) {
+  if (notes.length <= max) return notes;
+  const cut = notes.slice(0, max);
+  const space = cut.search(/\s\S*$/);
+  return (space > max * 0.6 ? cut.slice(0, space) : cut) + '…';
+}
 
 export function openMoments() {
   const queue = M.momentsCandidates();
@@ -71,7 +80,7 @@ export function openMoments() {
     // --- Карточка задачи
     const card = h('div', { class: 'moments-task' },
       h('h3', null, task.title || 'Без названия'),
-      task.notes ? h('p', { class: 'notes' }, task.notes.slice(0, 220)) : null,
+      task.notes ? h('p', { class: 'notes' }, linkify(clampNotes(task.notes))) : null,
       h('p', { class: 'cur' },
         task.due ? `Сейчас: ${fmtDue(task.due)}` : 'Сейчас: без даты',
         task.subtasks.length ? ` · ${task.subtasks.length} ${plural(task.subtasks.length, 'подзадача', 'подзадачи', 'подзадач')}` : '',
