@@ -18,7 +18,7 @@ same list follows you from your Mac to your iPhone.
 
 - **Views:** Today (overdue tasks included), Tomorrow, Upcoming (grouped by day), No date, All, Calendars, Done.
 - **Tasks:** title, notes, checkable subtasks.
-- **Clickable links in notes:** a URL left in the notes shows up both in the list row (an `↗` marker with the domain) and in the task card, as a separate list under the notes field. It opens in a new tab; tapping it in the list neither opens the card nor starts a drag.
+- **Clickable links:** a URL in a task title or in its notes stays where it was written and simply becomes clickable — in the list row, in the task card and on the day-planning card. It opens in a new tab; tapping it in the list neither opens the card nor starts a drag. Clicking the notes anywhere else starts editing, with the caret right where you tapped.
 - **Complete / reopen**, plus a "Clear completed" button with undo.
 - **Due date and time:** quick buttons — Today / Tomorrow / In 2 days / Next week — alongside plain date and time fields.
 - **Recurrence:** daily, weekly, or monthly, with an interval and a time of day. Marking a task done moves it to the next date in the series and resets its subtasks.

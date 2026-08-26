@@ -198,15 +198,6 @@ export function findLinks(text) {
   return out;
 }
 
-/** Домен без «www.» — короткая подпись для ссылки в тесном месте (строка списка). */
-export function linkHost(href) {
-  try {
-    return new URL(href).hostname.replace(/^www\./i, '');
-  } catch {
-    return href;
-  }
-}
-
 /** Текст → массив узлов, где адреса стали кликабельными <a>. Остальное
  *  остаётся текстовыми узлами, поэтому вставлять в DOM безопасно. */
 export function linkify(text) {
@@ -223,9 +214,36 @@ export function linkify(text) {
       target: '_blank',
       rel: 'noopener noreferrer',
       onclick: (e) => e.stopPropagation(),
+      onpointerdown: (e) => e.stopPropagation(),
     }, l.raw));
     pos = l.end;
   }
   if (pos < src.length) nodes.push(src.slice(pos));
   return nodes;
+}
+
+/** Символьная позиция в тексте под точкой экрана. Нужна, чтобы клик по заметке
+ *  открывал правку с курсором там, куда ткнули, а не в конце текста.
+ *  Вернёт null, если браузер не подсказал позицию — тогда курсор идёт в конец. */
+export function caretIndexAt(root, clientX, clientY) {
+  let node = null;
+  let offset = 0;
+  if (document.caretPositionFromPoint) {
+    const pos = document.caretPositionFromPoint(clientX, clientY);
+    if (pos) { node = pos.offsetNode; offset = pos.offset; }
+  } else if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(clientX, clientY);
+    if (range) { node = range.startContainer; offset = range.startOffset; }
+  }
+  if (!node || !root.contains(node)) return null;
+
+  // Позиция пришла относительно одного текстового узла, а в textarea нужен
+  // сквозной индекс — складываем длины всех узлов до него.
+  let index = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n; (n = walker.nextNode());) {
+    if (n === node) return index + offset;
+    index += n.nodeValue.length;
+  }
+  return null;
 }
