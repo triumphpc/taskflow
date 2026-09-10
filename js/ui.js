@@ -1,11 +1,10 @@
-// Отрисовка интерфейса: навигация, списки, редактор задачи, настройки, календарь.
+// Отрисовка интерфейса: навигация, списки, редактор задачи, настройки.
 
 import { $, h, clear, append, todayStr, addDaysStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
   combineDue, plural, debounce, oneLine, linkify, caretIndexAt } from './util.js';
 import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
 import * as S from './sync.js';
 import * as M from './model.js';
-import * as G from './gcal.js';
 
 /** Заполняется из app.js: {view, setView, refresh}. */
 export const ctx = { view: 'today', setView: () => {}, refresh: () => {} };
@@ -79,8 +78,8 @@ export function confirmSheet({ title, text, okLabel = 'Да', danger = false }) 
 
 // ---------- Навигация ----------
 
-const NAV_ITEMS = ['today', 'tomorrow', 'upcoming', 'someday', 'all', 'calendar', 'done'];
-const NAV_MOBILE = ['today', 'upcoming', 'all', 'calendar', 'done'];
+const NAV_ITEMS = ['today', 'tomorrow', 'upcoming', 'someday', 'all', 'done'];
+const NAV_MOBILE = ['today', 'upcoming', 'all', 'done'];
 
 function navButton(id, counts) {
   const v = M.VIEWS[id];
@@ -123,7 +122,6 @@ function subtitleFor(view) {
   if (view === 'someday') return 'Задачи без даты — их подхватит Moments';
   if (view === 'all') return `${c.all} активных · ${c.done} выполнено`;
   if (view === 'done') return c.done ? `${c.done} ${plural(c.done, 'задача', 'задачи', 'задач')}` : 'Пока пусто';
-  if (view === 'calendar') return 'Google Calendar';
   return '';
 }
 
@@ -146,7 +144,6 @@ function snoozeButtons(task) {
       e.stopPropagation();
       M.scheduleTask(task.id, when());
       toast(`Перенесено: ${label.toLowerCase()}`);
-      scheduleSync();
     },
   }, glyph)));
 }
@@ -165,8 +162,6 @@ function taskRow(task) {
   if (task.repeat) meta.push(h('span', { class: 'rep' }, '↻ ' + M.repeatLabel(task.repeat)));
   if (task.subtasks.length) meta.push(h('span', null, `☑ ${subDone}/${task.subtasks.length}`));
   if (task.priority <= 3) meta.unshift(h('span', { class: 'chip-p' }, M.PRIORITIES[task.priority].code));
-  if (task.gcal?.error) meta.push(h('span', { class: 'syncerr', title: task.gcal.error }, '⚠ Google'));
-  else if (task.gcal?.eventId) meta.push(h('span', { class: 'synced', title: 'В Google Calendar' }, '◉'));
 
   const li = h('li', {
     class: `task${task.done ? ' done' : ''}`,
@@ -193,7 +188,6 @@ function handleToggle(id) {
   if (res?.kind === 'rescheduled') {
     toast(`Повтор: перенесено на ${fmtDue(res.nextDue).toLowerCase()}`);
   }
-  scheduleSync();
 }
 
 // ---------- Перетаскивание задач ----------
@@ -427,7 +421,6 @@ function applyDrop(taskId, fromList, toList) {
   }
 
   focusHandle = taskId;
-  scheduleSync();
   render();
 }
 
@@ -523,7 +516,6 @@ function composer() {
     const task = M.createTask(parsed);
     input.value = '';
     autoGrow(input);
-    scheduleSync();
     toast('Задача добавлена', { actionLabel: 'Открыть', action: () => openEditor(task.id) });
   };
 
@@ -598,31 +590,19 @@ function renderListView(root, view) {
           const snapshot = state.tasks.filter((t) => t.done).map((t) => ({ ...t }));
           const ok = await confirmSheet({
             title: 'Очистить выполненные',
-            text: `Будет удалено ${snapshot.length} ${plural(snapshot.length, 'задача', 'задачи', 'задач')}. Связанные события в Google Calendar тоже удалятся.`,
+            text: `Будет удалено ${snapshot.length} ${plural(snapshot.length, 'задача', 'задачи', 'задач')}.`,
             okLabel: 'Очистить', danger: true,
           });
           if (!ok) return;
           const n = M.clearCompleted();
-          scheduleSync();
           toast(`Удалено: ${n}`, {
             actionLabel: 'Вернуть',
-            action: () => { snapshot.forEach((t) => M.createTask({ ...t, gcal: { eventId: null, calendarId: null, hash: null, error: null } })); },
+            action: () => { snapshot.forEach((t) => M.createTask({ ...t })); },
           });
         },
       }, 'Очистить выполненные')));
   }
 }
-
-// ---------- Автосинхронизация ----------
-
-const runSync = debounce(async () => {
-  if (!G.isConfigured() || !state.settings.gcalAutoSync) return;
-  if (!G.gstatus.connected && !G.wasGrantedBefore()) return;
-  const res = await G.syncAll({ interactive: false });
-  if (res?.error) console.warn('[gcal]', res.error);
-}, 2500);
-
-export function scheduleSync() { runSync(); }
 
 // ---------- Редактор задачи ----------
 
@@ -635,7 +615,7 @@ export function openEditor(taskId) {
   // устаревший снимок — приоритет не подсвечивался, подзадачи не появлялись.
   const reread = () => { task = M.getTask(taskId) || task; return task; };
 
-  const apply = (patch) => { M.updateTask(task.id, patch); ctx.refresh(); scheduleSync(); };
+  const apply = (patch) => { M.updateTask(task.id, patch); ctx.refresh(); };
   const applyQuiet = debounce((patch) => apply(patch), 400);
 
   // --- Заголовок и заметки
@@ -813,16 +793,16 @@ export function openEditor(taskId) {
     clear(subWrap);
     for (const s of task.subtasks) {
       const title = h('input', { class: 'st-title', value: s.title, 'aria-label': 'Подзадача' });
-      title.addEventListener('change', () => { M.renameSubtask(task.id, s.id, title.value); scheduleSync(); });
+      title.addEventListener('change', () => { M.renameSubtask(task.id, s.id, title.value); });
       subWrap.append(h('div', { class: `subtask${s.done ? ' done' : ''}` },
         h('button', {
           class: 'check', 'aria-label': 'Отметить подзадачу',
-          onclick: () => { M.toggleSubtask(task.id, s.id); renderSubs(); ctx.refresh(); scheduleSync(); },
+          onclick: () => { M.toggleSubtask(task.id, s.id); renderSubs(); ctx.refresh(); },
         }),
         title,
         h('button', {
           class: 'rm', 'aria-label': 'Удалить подзадачу',
-          onclick: () => { M.removeSubtask(task.id, s.id); renderSubs(); ctx.refresh(); scheduleSync(); },
+          onclick: () => { M.removeSubtask(task.id, s.id); renderSubs(); ctx.refresh(); },
         }, '✕')));
     }
     const add = h('input', { placeholder: 'Добавить подзадачу…', 'aria-label': 'Новая подзадача' });
@@ -833,21 +813,11 @@ export function openEditor(taskId) {
       add.value = '';
       renderSubs();
       ctx.refresh();
-      scheduleSync();
       subWrap.querySelector('.subtask-add input')?.focus();
     });
     subWrap.append(h('div', { class: 'subtask-add' }, h('span', null, '+'), add));
   }
   renderSubs();
-
-  // --- Статус Google
-  const gcalLine = () => {
-    if (!G.isConfigured()) return null;
-    if (task.gcal?.error) return h('p', { class: 'hint', style: { color: 'var(--danger)' } }, `Google: ${task.gcal.error}`);
-    if (task.gcal?.eventId) return h('p', { class: 'hint' }, '◉ Событие создано в календаре «' + state.settings.gcalCalendarName + '»');
-    if (task.due) return h('p', { class: 'hint' }, 'Будет выгружено в Google Calendar при следующей синхронизации');
-    return h('p', { class: 'hint' }, 'Без даты задача в календарь не попадает');
-  };
 
   const sheet = openSheet({
     title: 'Задача',
@@ -861,7 +831,6 @@ export function openEditor(taskId) {
         h('div', { class: 'row' }, dateInput, timeInput)),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Повтор'), repeatWrap),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Приоритет'), prioWrap),
-      gcalLine(),
     ],
     footNodes: [
       h('button', {
@@ -872,7 +841,6 @@ export function openEditor(taskId) {
           M.deleteTask(task.id);
           sheet.close();
           ctx.refresh();
-          scheduleSync();
           toast('Задача удалена');
         },
       }, 'Удалить'),
@@ -902,107 +870,6 @@ export function openEditor(taskId) {
   // scrollHeight имеет смысл только когда элемент уже в документе.
   setTimeout(() => { autoGrow(titleInput); if (!task.title) titleInput.focus(); }, 40);
   return sheet;
-}
-
-// ---------- Раздел «Календари» ----------
-
-let calTab = 'list';
-
-function renderCalendarView(root) {
-  const tabs = h('div', { class: 'cal-tabs' },
-    h('button', { class: `chip${calTab === 'list' ? ' active' : ''}`, onclick: () => { calTab = 'list'; ctx.refresh(); } }, 'Ближайшие события'),
-    h('button', { class: `chip${calTab === 'embed' ? ' active' : ''}`, onclick: () => { calTab = 'embed'; ctx.refresh(); } }, 'Виджет Google'));
-  root.append(tabs);
-
-  if (calTab === 'embed') { root.append(embedWidget()); return; }
-
-  if (!G.originAllowed()) {
-    root.append(noticeBlock('Google требует HTTPS',
-      'Откройте приложение по https:// (или http://localhost для отладки) — иначе Google не выдаст доступ к календарю.'));
-    return;
-  }
-  if (!G.isConfigured()) {
-    root.append(noticeBlock('Google Calendar не подключён',
-      'Укажите OAuth Client ID и включите синхронизацию в настройках.',
-      h('button', { class: 'btn btn-primary', onclick: openSettings }, 'Открыть настройки')));
-    return;
-  }
-
-  const holder = h('div', null, h('p', { class: 'muted', style: { padding: '18px 4px' } }, 'Загружаем события…'));
-  root.append(holder);
-
-  G.listUpcomingEvents(7).then((events) => {
-    clear(holder);
-    if (!events.length) {
-      holder.append(noticeBlock('На неделю событий нет', 'В подключённых календарях Google ничего не запланировано на ближайшие 7 дней.'));
-      return;
-    }
-    const byDay = new Map();
-    for (const e of events) {
-      const start = G.eventStart(e);
-      const key = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
-      if (!byDay.has(key)) byDay.set(key, []);
-      byDay.get(key).push(e);
-    }
-    for (const [day, items] of byDay) {
-      const rows = items.map((e) => h('div', { class: 'ev' },
-        h('span', { class: 'bar', style: e._color ? { background: e._color } : null }),
-        h('span', { class: 't' }, G.eventIsAllDay(e) ? 'весь день' : fmtTime(G.eventStart(e))),
-        h('div', { class: 'b' },
-          h('div', { class: 's' }, e.summary || '(без названия)'),
-          h('div', { class: 'c' }, [e._cal, e.location].filter(Boolean).join(' · ')))));
-
-      holder.append(h('section', { class: 'cal-day' },
-        h('h3', null, fmtDayLabel(day)),
-        h('div', { class: 'ev-list' }, ...rows)));
-    }
-  }).catch((err) => {
-    clear(holder);
-    holder.append(noticeBlock('Не удалось загрузить события', err.message,
-      h('button', { class: 'btn', onclick: () => G.connect().then(ctx.refresh).catch((e) => toast(e.message, { error: true })) }, 'Подключить заново')));
-  });
-}
-
-/** Разбирает строку настроек: «id» либо «id|#rrggbb» (цвет необязателен). */
-function parseEmbedIds(raw) {
-  return (raw || '').split(',').map((s) => s.trim()).filter(Boolean).map((entry) => {
-    const [id, color] = entry.split('|').map((x) => x.trim());
-    return { id, color: /^#[0-9a-f]{6}$/i.test(color || '') ? color : null };
-  }).filter((c) => c.id);
-}
-
-function embedWidget() {
-  const cals = parseEmbedIds(state.settings.embedCalendarIds);
-  if (!cals.length) {
-    return noticeBlock('Виджет не настроен',
-      'Укажите в настройках адреса календарей (например, ваш gmail-адрес и id календаря TaskFlow) — они подставятся в официальный виджет Google.',
-      h('button', { class: 'btn btn-primary', onclick: openSettings }, 'Открыть настройки'));
-  }
-  const url = new URL('https://calendar.google.com/calendar/embed');
-  url.searchParams.set('ctz', G.TZ);
-  url.searchParams.set('mode', state.settings.embedMode || 'WEEK');
-  url.searchParams.set('wkst', '2');
-  url.searchParams.set('hl', 'ru');
-  url.searchParams.set('showTitle', '0');
-  url.searchParams.set('showPrint', '0');
-  for (const c of cals) url.searchParams.append('src', c.id);
-  // Google красит src в собственные цвета только если color задан для КАЖДОГО из них,
-  // строго в том же порядке. Иначе весь виджет заливается одним цветом.
-  if (cals.some((c) => c.color)) {
-    for (const c of cals) url.searchParams.append('color', c.color || '#9fc6e7');
-  }
-
-  return h('div', null,
-    h('div', { class: 'embed-wrap' },
-      h('iframe', { src: url.toString(), title: 'Google Calendar', loading: 'lazy' })),
-    h('p', { class: 'hint' }, 'Виджет показывает только те календари, которые доступны вам в текущей сессии Google в этом браузере.'));
-}
-
-function noticeBlock(title, text, ...actions) {
-  return h('div', { class: 'empty' },
-    h('p', { style: { fontWeight: '600', color: 'var(--text-dim)', marginBottom: '6px' } }, title),
-    h('p', { style: { maxWidth: '420px', margin: '0 auto 14px' } }, text),
-    ...actions);
 }
 
 // ---------- Настройки ----------
@@ -1036,126 +903,6 @@ export function openSettings() {
     }
   };
   drawThemes();
-
-  // --- Google
-  const clientIdInput = h('input', {
-    class: 'input', type: 'text', spellcheck: 'false', autocomplete: 'off',
-    placeholder: '123456789-xxxx.apps.googleusercontent.com', value: s.googleClientId,
-  });
-  clientIdInput.addEventListener('change', () => patchSettings({ googleClientId: clientIdInput.value.trim() }));
-
-  const calNameInput = h('input', { class: 'input', type: 'text', value: s.gcalCalendarName });
-  calNameInput.addEventListener('change', () => patchSettings({ gcalCalendarName: calNameInput.value.trim() || 'TaskFlow', gcalCalendarId: null }));
-
-  const durInput = h('input', { class: 'input', type: 'number', min: '5', max: '480', step: '5', value: String(s.gcalEventMinutes) });
-  durInput.addEventListener('change', () => patchSettings({ gcalEventMinutes: Math.max(5, Number(durInput.value) || 30) }));
-
-  const gStatus = h('div');
-  const drawStatus = () => {
-    clear(gStatus);
-    const cls = G.gstatus.lastError ? 'err' : G.gstatus.connected ? 'on' : 'off';
-    const text = G.gstatus.lastError ? G.gstatus.lastError
-      : G.gstatus.connected ? 'подключено' : 'не подключено';
-    append(gStatus,
-      h('div', { class: 'kv' }, h('span', { class: 'k' }, 'Состояние'),
-        h('span', { class: 'v' }, h('span', { class: `dot-status ${cls}` }), ' ' + text)),
-      h('div', { class: 'kv' }, h('span', { class: 'k' }, 'Ожидают выгрузки'),
-        h('span', { class: 'v' }, String(G.pendingChanges()))),
-      G.gstatus.lastSync ? h('div', { class: 'kv' }, h('span', { class: 'k' }, 'Последняя синхронизация'),
-        h('span', { class: 'v' }, fmtTime(new Date(G.gstatus.lastSync)))) : null);
-  };
-  drawStatus();
-
-  const gButtons = h('div', { class: 'chips', style: { marginTop: '8px' } },
-    h('button', {
-      class: 'btn btn-primary btn-sm',
-      onclick: async (e) => {
-        const btn = e.currentTarget;
-        btn.disabled = true;
-        try {
-          patchSettings({ googleClientId: clientIdInput.value.trim(), gcalEnabled: true });
-          await G.connect();
-          toast('Google Calendar подключён');
-          const res = await G.syncAll({ interactive: true, force: true });
-          if (res.error) toast(res.error, { error: true });
-          else toast(`Выгружено: ${res.created + res.updated}, удалено: ${res.deleted}`);
-        } catch (err) {
-          toast(err.message, { error: true });
-        } finally {
-          btn.disabled = false;
-          drawStatus();
-          ctx.refresh();
-        }
-      },
-    }, 'Подключить и выгрузить'),
-    h('button', {
-      class: 'btn btn-sm',
-      onclick: async () => {
-        const res = await G.syncAll({ interactive: true, force: true });
-        if (res.error) toast(res.error, { error: true });
-        else toast(`Создано: ${res.created}, обновлено: ${res.updated}, удалено: ${res.deleted}`);
-        drawStatus();
-        ctx.refresh();
-      },
-    }, 'Синхронизировать сейчас'),
-    h('button', {
-      class: 'btn btn-sm btn-danger',
-      onclick: () => { G.disconnect(); drawStatus(); ctx.refresh(); toast('Доступ Google отозван'); },
-    }, 'Отключить'));
-
-  // --- Какие календари показывать в списке «Ближайшие события»
-  const calListBox = h('div', { style: { marginTop: '4px' } });
-  const drawCalList = async () => {
-    clear(calListBox);
-    if (!G.gstatus.connected) {
-      append(calListBox, h('p', { class: 'hint' }, 'Подключите Google Calendar, чтобы выбрать календари.'));
-      return;
-    }
-    append(calListBox, h('p', { class: 'hint' }, 'Загружаю список календарей…'));
-    let cals;
-    try {
-      cals = await G.listCalendars();
-    } catch (err) {
-      clear(calListBox);
-      append(calListBox, h('p', { class: 'hint' }, 'Не удалось получить список: ' + err.message));
-      return;
-    }
-    clear(calListBox);
-    for (const c of cals) {
-      const hidden = new Set(state.settings.hiddenCalendarIds || []);
-      const box = h('input', { type: 'checkbox', checked: hidden.has(c.id) ? null : true,
-        style: { width: '18px', height: '18px', flex: '0 0 auto' } });
-      box.addEventListener('change', () => {
-        const next = new Set(state.settings.hiddenCalendarIds || []);
-        if (box.checked) next.delete(c.id); else next.add(c.id);
-        patchSettings({ hiddenCalendarIds: [...next] });
-        ctx.refresh();
-      });
-      const label = h('label', { style: {
-        display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 0', cursor: 'pointer' } },
-        box,
-        h('span', { style: { width: '10px', height: '10px', borderRadius: '50%',
-          background: c.backgroundColor || 'var(--accent)', flex: '0 0 auto' } }),
-        h('span', null, c.summary));
-      append(calListBox, label);
-    }
-  };
-  drawCalList();
-
-  // --- Виджет
-  const embedInput = h('textarea', {
-    class: 'textarea', style: { minHeight: '58px' }, spellcheck: 'false',
-    placeholder: 'you@gmail.com|#b99aff, abcdef123@group.calendar.google.com|#92e1c0',
-  });
-  embedInput.value = s.embedCalendarIds;
-  embedInput.addEventListener('change', () => patchSettings({ embedCalendarIds: embedInput.value.trim() }));
-
-  const modeSelect = h('select', { class: 'select' },
-    h('option', { value: 'WEEK' }, 'Неделя'),
-    h('option', { value: 'MONTH' }, 'Месяц'),
-    h('option', { value: 'AGENDA' }, 'Расписание'));
-  modeSelect.value = s.embedMode;
-  modeSelect.addEventListener('change', () => patchSettings({ embedMode: modeSelect.value }));
 
   // --- Части дня
   const partsRow = h('div', { class: 'row' });
@@ -1300,32 +1047,6 @@ export function openSettings() {
         h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Токен доступа'), tokenInput),
         syncStatusBox, syncButtons),
 
-      sectionBlock('Google Calendar',
-        !G.originAllowed() ? h('div', { class: 'banner warn', style: { margin: '0 0 12px' } },
-          h('span', null, h('b', null, 'Нужен HTTPS. '),
-            'Google разрешает OAuth только с https-адресов и с http://localhost. Сейчас страница открыта по ',
-            location.protocol + '//' + location.host, '.')) : null,
-        h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'OAuth Client ID'), clientIdInput,
-          h('p', { class: 'hint' }, 'Google Cloud → APIs & Services → Credentials → OAuth client ID (Web application). Инструкция в README.')),
-        switchRow('Синхронизировать задачи с Google Calendar',
-          'Задачи с датой становятся событиями в отдельном календаре. Правки в Google обратно не переносятся.',
-          s.gcalEnabled, (v) => { patchSettings({ gcalEnabled: v }); ctx.refresh(); }),
-        switchRow('Выгружать автоматически', 'Через пару секунд после каждой правки.', s.gcalAutoSync, (v) => patchSettings({ gcalAutoSync: v })),
-        h('div', { class: 'row', style: { marginTop: '10px' } },
-          h('div', null, h('span', { class: 'field-label' }, 'Название календаря'), calNameInput),
-          h('div', null, h('span', { class: 'field-label' }, 'Длительность события, мин'), durInput)),
-        gStatus, gButtons),
-
-      sectionBlock('Календари в списке событий',
-        h('p', { class: 'hint', style: { marginBottom: '4px' } },
-          'Снимите галочку, чтобы календарь не подгружался на вкладке «Ближайшие события». На виджет Google это не влияет — он настраивается ниже.'),
-        calListBox),
-
-      sectionBlock('Виджет Google Calendar',
-        h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Адреса календарей через запятую'), embedInput,
-          h('p', { class: 'hint' }, 'Обычно это ваш gmail-адрес и id календаря TaskFlow (Google Calendar → настройки календаря → «Интеграция»). Чтобы календари отличались по цвету, допишите его через вертикальную черту: id|#b99aff.')),
-        h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Режим'), modeSelect)),
-
       sectionBlock('Планирование дня (Moments)',
         h('p', { class: 'hint', style: { marginBottom: '8px' } }, 'Во сколько ставить задачу, когда в Moments выбрано «Сегодня».'),
         partsRow),
@@ -1345,7 +1066,7 @@ export function openSettings() {
           'Копия списка всегда лежит в этом браузере, поэтому приложение работает офлайн. При включённой синхронизации главный экземпляр — на вашем сервере. Экспорт JSON пригодится для резервной копии.'),
         dataButtons),
 
-      h('p', { class: 'hint' }, 'TaskFlow · данные уходят только на ваш сервер синхронизации и в Google Calendar, если он включён.'),
+      h('p', { class: 'hint' }, 'TaskFlow · данные уходят только на ваш сервер синхронизации.'),
     ],
     footNodes: [h('span', { class: 'spacer' }), h('button', { class: 'btn btn-primary', onclick: () => $('.overlay:last-child .sheet-head .icon-btn').click() }, 'Закрыть')],
     onClose: () => ctx.refresh(),
@@ -1360,52 +1081,26 @@ export function applyTheme() {
   else document.documentElement.setAttribute('data-theme', t);
 }
 
-// ---------- Баннеры ----------
-
-function renderBanners() {
-  const root = $('#banner-root');
-  clear(root);
-  const dismissed = state.settings.dismissedBanners || [];
-
-  const add = (key, node) => {
-    if (dismissed.includes(key)) return;
-    node.append(h('button', {
-      class: 'close', 'aria-label': 'Скрыть',
-      onclick: () => { patchSettings({ dismissedBanners: [...(state.settings.dismissedBanners || []), key] }); ctx.refresh(); },
-    }, '✕'));
-    root.append(node);
-  };
-
-  if (state.settings.gcalEnabled && !G.originAllowed()) {
-    add('insecure', h('div', { class: 'banner warn' },
-      h('span', null, h('b', null, 'Google Calendar выключен: нужен HTTPS. '),
-        'Синхронизация заработает, когда страница откроется по https:// (или с http://localhost при отладке).')));
-  } else if (state.settings.gcalEnabled && state.settings.googleClientId && !G.gstatus.connected) {
-    add('connect', h('div', { class: 'banner' },
-      h('span', null, 'Google Calendar настроен, но доступ не выдан в этой сессии. '),
-      h('button', {
-        class: 'btn btn-sm', style: { marginLeft: '4px' },
-        onclick: () => G.connect().then(() => { toast('Подключено'); scheduleSync(); ctx.refresh(); })
-          .catch((e) => toast(e.message, { error: true })),
-      }, 'Подключить')));
-  }
-}
-
 // ---------- Строка состояния синхронизации ----------
 
 function renderSyncLine() {
   const el = $('#sync-line-side');
   if (!el) return;
   clear(el);
-  if (!G.isConfigured()) {
-    el.append(h('span', null, 'Google Calendar: выключен'));
+  if (S.syncState.available === false) {
+    el.append(h('span', null, 'Сервер синхронизации недоступен'));
     return;
   }
-  const pending = G.pendingChanges();
+  if (!S.isConfigured()) {
+    el.append(h('span', null, 'Синхронизация между устройствами: выключена'));
+    return;
+  }
   append(el,
-    h('div', null, h('b', null, 'Google Calendar'), G.gstatus.connected ? ' · подключён' : ' · нет доступа'),
-    h('div', null, G.gstatus.syncing ? 'синхронизация…' : pending ? `${pending} ${plural(pending, 'изменение', 'изменения', 'изменений')} в очереди` : 'всё выгружено'),
-    G.gstatus.lastError ? h('div', { style: { color: 'var(--danger)' } }, G.gstatus.lastError) : null);
+    h('div', null, h('b', null, 'Синхронизация между устройствами')),
+    h('div', null, S.syncState.syncing ? 'обмен…'
+      : S.syncState.lastSync ? `обновлено в ${fmtTime(new Date(S.syncState.lastSync))}`
+      : 'ещё не обменивались'),
+    S.syncState.lastError ? h('div', { style: { color: 'var(--danger)' } }, S.syncState.lastError) : null);
 }
 
 // ---------- Кнопка порядка сортировки ----------
@@ -1419,7 +1114,7 @@ function renderSortButton() {
   const btn = $('#btn-sort');
   if (!btn) return;
   const manual = M.isManualSort();
-  btn.classList.toggle('hidden', ctx.view === 'calendar' || ctx.view === 'done');
+  btn.classList.toggle('hidden', ctx.view === 'done');
   btn.classList.toggle('active', manual);
   btn.title = SORT_HINT[manual ? 'manual' : 'auto'];
   btn.setAttribute('aria-pressed', manual ? 'true' : 'false');
@@ -1461,7 +1156,7 @@ export async function syncDevicesNow() {
 }
 
 export function toggleSortMode() {
-  if (ctx.view === 'calendar' || ctx.view === 'done') return;
+  if (ctx.view === 'done') return;
   const mode = M.toggleSortMode();
   toast(mode === 'manual'
     ? 'Ручной порядок: задачи стоят так, как вы их расставили'
@@ -1478,17 +1173,13 @@ export function render() {
   renderNav();
   $('#view-title').textContent = M.VIEWS[ctx.view]?.title || '';
   $('#view-subtitle').textContent = subtitleFor(ctx.view);
-  $('#btn-sync').classList.toggle('spin', G.gstatus.syncing);
-  $('#btn-sync').classList.toggle('hidden', !G.isConfigured());
   renderSortButton();
   renderCloudButton();
-  renderBanners();
 
   const content = $('#content');
   const scrollTop = content.scrollTop;
   clear(content);
-  if (ctx.view === 'calendar') renderCalendarView(content);
-  else renderListView(content, ctx.view);
+  renderListView(content, ctx.view);
   content.scrollTop = scrollTop;
 
   renderSyncLine();

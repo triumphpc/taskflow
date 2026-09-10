@@ -1,7 +1,7 @@
 # TaskFlow
 
 A personal task manager in a single HTML page: Eisenhower priorities, recurring
-tasks, a daily planning wizard ("Moments"), and one-way sync to Google Calendar.
+tasks, a daily planning wizard ("Moments"), and cross-device sync.
 No framework, no build step, no dependencies — plus a tiny Node backend so the
 same list follows you from your Mac to your iPhone.
 
@@ -16,7 +16,7 @@ same list follows you from your Mac to your iPhone.
 
 ## Features
 
-- **Views:** Today (overdue tasks included), Tomorrow, Upcoming (grouped by day), No date, All, Calendars, Done.
+- **Views:** Today (overdue tasks included), Tomorrow, Upcoming (grouped by day), No date, All, Done.
 - **Tasks:** title, notes, checkable subtasks.
 - **Clickable links:** a URL in a task title or in its notes stays where it was written and simply becomes clickable — in the list row, in the task card and on the day-planning card. It opens in a new tab; tapping it in the list neither opens the card nor starts a drag. Clicking the notes anywhere else starts editing, with the caret right where you tapped.
 - **Complete / reopen**, plus a "Clear completed" button with undo.
@@ -26,8 +26,6 @@ same list follows you from your Mac to your iPhone.
 - **Drag and drop:** grab a task anywhere on its row. With a mouse, just drag; with a finger, press and hold until the row lifts (a short swipe still scrolls the list). The `⠿` handle on the right picks the row up immediately, without the hold. Dropping inside a group reorders it; dropping into another group reschedules the task — drop it on "Tomorrow" and it moves to tomorrow, drop it on "No date" and the due date is cleared. Keyboard works too: `Tab` to the handle, then `↑` / `↓`.
 - **List order:** automatic by default (by time, then by priority). The first drag pins a manual order; the `⇅` button in the header (or the `s` key) switches back.
 - **Moments** — a daily planning pass: the app walks through everything sitting on today (overdue, due today, and undated) and asks, for each task, a priority and a slot — today (morning / noon / afternoon / evening), tomorrow, in 2 days, next week, or no date. "Already done" and "Not relevant" are there too.
-- **Google Calendar:** tasks with a due date become events in a dedicated "TaskFlow" calendar. Recurring tasks are exported as recurring events (RRULE). Completing or deleting a task removes its event.
-- **Calendars view:** events from all of your calendars for the next 7 days, plus a tab with the official Google Calendar widget (iframe).
 - **Local reminders** — while the tab or the installed app is open.
 - **Theme** — light, dark, or follow the system.
 - **Cross-device sync** — tasks live on your own server, so your Mac, your iPhone, and any browser all see one list. It works offline: edits pile up locally and are pushed once the network is back.
@@ -38,7 +36,7 @@ task for tomorrow at 18:30 with priority P1. The recognised date words are
 Russian — `сегодня` (today), `завтра` (tomorrow), `послезавтра` (the day after) —
 alongside an `HH:MM` time and `!1`…`!4`, which work regardless of language.
 
-Keyboard shortcuts: `n` new task, `m` Moments, `s` list order, `,` settings, `1`…`5` views.
+Keyboard shortcuts: `n` new task, `m` Moments, `s` list order, `,` settings, `1`…`6` views.
 
 ---
 
@@ -91,8 +89,8 @@ Sync runs when the app opens, when you return to the tab, when the network comes
 back, once a minute in the background, and on the `☁` button in the header.
 Edits are pushed as a batch a second after the last change rather than one at a time.
 
-**Do settings sync? No.** Theme, sort order, and the Google Client ID stay local
-to each device — only tasks are synchronised.
+**Do settings sync? No.** Theme and sort order stay local to each device —
+only tasks are synchronised.
 
 ### API
 
@@ -210,73 +208,15 @@ server {
 There is no sync in this setup: without `/api` the app behaves exactly as it did
 before — every browser on its own.
 
-### HTTPS is mandatory for Google and PWA
+### HTTPS is mandatory for PWA
 
 Over plain `http://`, tasks, priorities, recurrence, Moments, sync, and local
-storage all work. **What does not work:** Google OAuth (Google only allows
-`https://` and `http://localhost`), the service worker, Home Screen install, and
-notifications. In other words, you can open the app on an iPhone over HTTP, but
-you cannot install it.
+storage all work. **What does not work:** the service worker, Home Screen
+install, and notifications. In other words, you can open the app on an iPhone
+over HTTP, but you cannot install it.
 
 The shortest path to a certificate is Caddy — it fetches Let's Encrypt itself,
 and the config from the HTTPS step above is two lines long.
-
----
-
-## Connecting Google Calendar
-
-1. Open the [Google Cloud Console](https://console.cloud.google.com/) and create a project (for example, `taskflow`).
-2. **APIs & Services → Library** → enable the **Google Calendar API**.
-3. **APIs & Services → OAuth consent screen**:
-   - type **External**; fill in the app name and a contact e-mail;
-   - at the **Scopes** step add `https://www.googleapis.com/auth/calendar`;
-   - at the **Test users** step add your own Google account.
-   You can leave the app in **Testing** mode — publishing and Google's review are
-   unnecessary while you are the only user. In that mode access has to be
-   re-confirmed every 7 days.
-4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
-   - type **Web application**;
-   - **Authorized JavaScript origins**: `http://localhost:8787` and your address `https://tasks.example.com` (no path, no trailing slash);
-   - **Authorized redirect URIs** can be left empty — the implicit token flow is used.
-5. Copy the **Client ID** (`…apps.googleusercontent.com`).
-6. In TaskFlow: **⚙ Settings → Google Calendar** → paste the Client ID, turn on
-   "Sync tasks with Google Calendar", and press **"Connect and export"**.
-
-The app finds or creates a calendar named after the setting (`TaskFlow` by
-default) and exports every task that has a date.
-
-**Worth knowing:**
-
-- Sync is one-way: TaskFlow → Google. Edits made to an event in Google do not come back.
-- The Client ID is not a secret — you can commit it and show it; security comes from the allowed origins list and the user's consent. **No client secret is used here at all.**
-- The token lives for about an hour and is kept in `sessionStorage`. While the browser has an active Google session the app renews it silently; otherwise it shows a "Connect" button.
-- A task without a date never reaches the calendar.
-
-### Which calendars to show
-
-**Settings → Calendars in the event list** lists your calendars with checkboxes.
-Unchecking one means it is not requested for the "Upcoming events" tab (which
-also saves API calls). This does not affect the Google widget — that has its own
-list below.
-
-### The calendar widget
-
-Under **Settings → Google Calendar widget**, list calendar addresses separated by
-commas — usually your Gmail address and the id of the TaskFlow calendar (Google
-Calendar → settings for that calendar → "Integrate calendar" → *Calendar ID*).
-The "Google widget" tab in the Calendars view renders them in the official iframe.
-
-To tell calendars apart by colour, append a colour after a vertical bar:
-
-```
-you@gmail.com|#b99aff, abcdef123@group.calendar.google.com|#92e1c0
-```
-
-This matters: if you give **no** calendar a colour, Google paints every event the
-same shade and they become indistinguishable. Colour is all-or-nothing — any
-calendar you leave out gets the default. You can take ready-made values for your
-calendars from the `calendarList` response (the `backgroundColor` field), or just
-pick them by hand as `#rrggbb`.
 
 ---
 
@@ -315,8 +255,7 @@ styles.css              theme, layout, responsive rules
 js/util.js              DOM helpers, date handling
 js/store.js             state, localStorage, export/import
 js/model.js             tasks: CRUD, recurrence, per-view queries, manual order
-js/gcal.js              OAuth, the TaskFlow calendar, event export, reading calendars
-js/ui.js                rendering, drag and drop, task editor, settings, calendars
+js/ui.js                rendering, drag and drop, task editor, settings
 js/moments.js           the daily planning wizard
 js/sync.js              exchange with the sync server, applying the merged result
 js/app.js               entry point, routing, shortcuts, reminders

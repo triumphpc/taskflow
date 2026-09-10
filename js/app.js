@@ -1,12 +1,11 @@
 // Точка входа: загрузка состояния, маршрутизация по разделам, горячие клавиши,
-// напоминания и восстановление сессии Google.
+// напоминания и синхронизация между устройствами.
 
 import { $, debounce, oneLine } from './util.js';
 import { state, load, subscribe } from './store.js';
 import * as M from './model.js';
-import * as G from './gcal.js';
 import * as S from './sync.js';
-import { ctx, render, applyTheme, openEditor, openSettings, focusComposer, toast, scheduleSync, toggleSortMode, syncDevicesNow } from './ui.js';
+import { ctx, render, applyTheme, openEditor, openSettings, focusComposer, toggleSortMode, syncDevicesNow } from './ui.js';
 import { openMoments } from './moments.js';
 
 const VALID_VIEWS = Object.keys(M.VIEWS);
@@ -74,7 +73,8 @@ function onKeydown(e) {
   else if (e.key === '2') ctx.setView('tomorrow');
   else if (e.key === '3') ctx.setView('upcoming');
   else if (e.key === '4') ctx.setView('all');
-  else if (e.key === '5') ctx.setView('calendar');
+  else if (e.key === '5') ctx.setView('someday');
+  else if (e.key === '6') ctx.setView('done');
   else if (e.key === 's') { e.preventDefault(); toggleSortMode(); }
 }
 
@@ -111,20 +111,12 @@ function init() {
     // Фокус только синхронно, внутри самого жеста: iOS поднимает клавиатуру
     // лишь в этом случае, а из setTimeout молча ничего не делает.
     if (focusComposer()) return;
-    // На «Календаре» и «Выполнено» поля ввода нет. Смена раздела перерисовывает
+    // На «Выполнено» поля ввода нет. Смена раздела перерисовывает
     // список через hashchange, то есть позже, — рисуем сразу, чтобы успеть
     // навести фокус тем же жестом.
     ctx.setView('today');
     ctx.refresh();
     focusComposer();
-  });
-
-  $('#btn-sync').addEventListener('click', async () => {
-    if (!G.isConfigured()) { openSettings(); return; }
-    const res = await G.syncAll({ interactive: true, force: false });
-    if (res?.error) toast(res.error, { error: true });
-    else if (res?.skipped === 'insecure') toast('Google требует HTTPS', { error: true });
-    else if (res) toast(`Создано: ${res.created}, обновлено: ${res.updated}, удалено: ${res.deleted}`);
   });
 
   document.addEventListener('keydown', onKeydown);
@@ -140,12 +132,6 @@ function init() {
   // Связь появилась — догоняем накопленные правки.
   window.addEventListener('online', () => S.syncNow());
 
-  // Тихо восстанавливаем доступ Google и подчищаем очередь выгрузки.
-  G.restoreSession().then((ok) => {
-    render();
-    if (ok) scheduleSync();
-  });
-
   // Пересинхронизация при возврате на вкладку.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
@@ -153,7 +139,6 @@ function init() {
     render();
     // Вкладку могли не трогать час — на другом устройстве список уже уехал вперёд.
     S.syncNow();
-    if (G.isConfigured() && state.settings.gcalAutoSync) scheduleSync();
   });
 
   setInterval(tickReminders, 30_000);

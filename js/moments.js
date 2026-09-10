@@ -4,7 +4,7 @@
 import { h, clear, fmtDue, fmtDayLabel, fmtDateShort, timePart, combineDue, plural, linkify } from './util.js';
 import { state } from './store.js';
 import * as M from './model.js';
-import { openSheet, toast, ctx, scheduleSync, openEditor } from './ui.js';
+import { openSheet, toast, ctx, openEditor } from './ui.js';
 
 const DAY_PARTS = [
   ['morning', 'Утро'],
@@ -63,7 +63,6 @@ export function openMoments() {
     const task = queue[index];
     M.updateTask(task.id, patch);
     stats.planned++;
-    scheduleSync();
     if (message) toast(message, { ms: 2200 });
     next();
   }
@@ -94,7 +93,7 @@ export function openMoments() {
         prioChips.append(h('button', {
           class: `chip${task.priority === p.id ? ' active' : ''}`,
           title: p.name,
-          onclick: () => { M.updateTask(task.id, { priority: p.id }); scheduleSync(); drawPrio(); },
+          onclick: () => { M.updateTask(task.id, { priority: p.id }); drawPrio(); },
         }, `${p.code} · ${p.name}`));
       }
     };
@@ -146,7 +145,6 @@ export function openMoments() {
         onclick: () => {
           const res = M.toggleDone(task.id);
           stats.done++;
-          scheduleSync();
           toast(res?.kind === 'rescheduled' ? `Повтор: перенесено на ${fmtDue(res.nextDue).toLowerCase()}` : 'Выполнено', { ms: 2000 });
           next();
         },
@@ -155,7 +153,7 @@ export function openMoments() {
       h('button', {
         class: 'chip',
         style: { color: 'var(--danger)' },
-        onclick: () => { M.deleteTask(task.id); stats.deleted++; scheduleSync(); toast('Удалено', { ms: 2000 }); next(); },
+        onclick: () => { M.deleteTask(task.id); stats.deleted++; toast('Удалено', { ms: 2000 }); next(); },
       }, '✕ Не актуально'));
 
     body.append(

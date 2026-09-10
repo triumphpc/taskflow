@@ -1,7 +1,7 @@
 // Офлайн-кеш оболочки приложения. Регистрируется только в secure context
 // (https:// или http://localhost) — иначе браузер service worker не разрешит.
 
-const CACHE = 'taskflow-v10';
+const CACHE = 'taskflow-v11';
 
 const SHELL = [
   './',
@@ -13,7 +13,6 @@ const SHELL = [
   './js/model.js',
   './js/store.js',
   './js/util.js',
-  './js/gcal.js',
   './js/moments.js',
   './js/sync.js',
   './icons/icon.svg',
@@ -42,7 +41,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
-  // Google и всё стороннее — только сеть, кешировать нельзя.
+  // Всё стороннее — только сеть, кешировать нельзя.
   if (url.origin !== self.location.origin || e.request.method !== 'GET') return;
 
   // Синхронизация — всегда живая сеть. Закешированный ответ /api означал бы

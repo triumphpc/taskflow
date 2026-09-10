@@ -67,23 +67,15 @@ export function deleteTask(id) {
   const i = state.tasks.findIndex((t) => t.id === id);
   if (i < 0) return null;
   const [t] = state.tasks.splice(i, 1);
-  queueEventDelete(t);
   tombstone(t.id);
   commit('task:delete');
   return t;
 }
 
-/** Запоминает событие удалённой/завершённой задачи, чтобы убрать его из Google. */
-export function queueEventDelete(task) {
-  if (task.gcal?.eventId && task.gcal?.calendarId) {
-    state.pendingDeletes.push({ calendarId: task.gcal.calendarId, eventId: task.gcal.eventId });
-  }
-}
-
 export function clearCompleted() {
   const done = state.tasks.filter((t) => t.done);
   const at = Date.now();
-  done.forEach((t) => { queueEventDelete(t); tombstone(t.id, at); });
+  done.forEach((t) => tombstone(t.id, at));
   state.tasks = state.tasks.filter((t) => !t.done);
   commit('tasks:clear-completed');
   return done.length;
@@ -151,8 +143,6 @@ export function toggleDone(id) {
 
   t.done = true;
   t.completedAt = Date.now();
-  queueEventDelete(t);
-  t.gcal = { ...t.gcal, eventId: null };
   touch(t);
   commit('task:done');
   return { kind: 'done', task: t };
@@ -227,7 +217,6 @@ export const VIEWS = {
   upcoming: { id: 'upcoming', title: 'Ближайшие', icon: '▤' },
   someday: { id: 'someday', title: 'Без даты', icon: '◇' },
   all: { id: 'all', title: 'Все задачи', icon: '≡' },
-  calendar: { id: 'calendar', title: 'Календари', icon: '▦' },
   done: { id: 'done', title: 'Выполнено', icon: '✓' },
 };
 

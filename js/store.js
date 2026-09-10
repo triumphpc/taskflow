@@ -8,15 +8,6 @@ const SCHEMA = 1;
 
 export const DEFAULT_SETTINGS = {
   theme: 'auto',                 // auto | light | dark
-  googleClientId: '',            // OAuth Client ID (Web application)
-  gcalEnabled: false,            // включена ли синхронизация с Google Calendar
-  gcalCalendarName: 'TaskFlow',  // имя отдельного календаря для задач
-  gcalCalendarId: null,          // id найденного/созданного календаря
-  gcalEventMinutes: 30,          // длительность события для задачи со временем
-  gcalAutoSync: true,            // синхронизировать автоматически после правок
-  hiddenCalendarIds: [],         // id календарей, скрытых из списка «Ближайшие события»
-  embedCalendarIds: '',          // список id календарей для iframe-виджета, через запятую
-  embedMode: 'WEEK',             // WEEK | MONTH | AGENDA
   dayParts: { morning: '09:00', noon: '12:00', afternoon: '15:00', evening: '19:00' },
   notifications: false,          // локальные напоминания, пока вкладка открыта
   sortMode: 'auto',              // auto — по времени и приоритету; manual — ручной порядок (drag & drop)
@@ -32,8 +23,6 @@ export const state = {
    * слияние с другого устройства вернуло бы удалённую задачу обратно.
    */
   deleted: [],
-  /** События календаря, которые надо удалить в Google при следующей синхронизации. */
-  pendingDeletes: [],
   /** Ревизия, полученная от сервера синхронизации. 0 — обмена ещё не было. */
   rev: 0,
   settings: { ...DEFAULT_SETTINGS },
@@ -74,7 +63,6 @@ export function save() {
       schema: SCHEMA,
       tasks: state.tasks,
       deleted: state.deleted,
-      pendingDeletes: state.pendingDeletes,
       rev: state.rev,
       settings: state.settings,
     }));
@@ -97,7 +85,6 @@ export function load() {
     const parsed = JSON.parse(raw);
     state.tasks = Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeTask) : [];
     state.deleted = Array.isArray(parsed.deleted) ? parsed.deleted.filter((d) => d && d.id) : [];
-    state.pendingDeletes = Array.isArray(parsed.pendingDeletes) ? parsed.pendingDeletes : [];
     state.rev = Number(parsed.rev) || 0;
     state.settings = {
       ...DEFAULT_SETTINGS,
@@ -129,12 +116,6 @@ export function normalizeTask(t) {
       time: t.repeat.time || null,              // 'HH:mm' | null
       anchor: t.repeat.anchor || null,          // 'YYYY-MM-DD' — начало серии
     } : null,
-    gcal: {
-      eventId: t.gcal?.eventId || null,
-      calendarId: t.gcal?.calendarId || null,
-      hash: t.gcal?.hash || null,
-      error: t.gcal?.error || null,
-    },
     notifiedFor: t.notifiedFor || null,
     completions: Array.isArray(t.completions) ? t.completions : [],
     createdAt: t.createdAt || Date.now(),
@@ -161,7 +142,7 @@ export function exportJson() {
     schema: SCHEMA,
     exportedAt: new Date().toISOString(),
     tasks: state.tasks,
-    settings: { ...state.settings, googleClientId: state.settings.googleClientId },
+    settings: { ...state.settings },
   }, null, 2);
 }
 
@@ -212,6 +193,5 @@ export function wipeAll() {
   const at = Date.now();
   for (const t of state.tasks) tombstone(t.id, at);
   state.tasks = [];
-  state.pendingDeletes = [];
   commit('wipe');
 }
