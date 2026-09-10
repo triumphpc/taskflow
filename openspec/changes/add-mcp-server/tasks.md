@@ -49,16 +49,16 @@
 
 ## 6. Выкатка на VPS
 
-- [ ] 6.1 Завести `/etc/systemd/system/taskflow-mcp.service` (`PORT=8788`, `TASKFLOW_API=http://127.0.0.1:8787`, `TASKFLOW_DATA=/var/lib/taskflow`, `After=taskflow.service`, `Restart=always`)
-- [ ] 6.2 Добавить в Caddy `handle /mcp* { reverse_proxy 127.0.0.1:8788 }` перед общим `handle`
-- [ ] 6.3 Выполнить `npm install` на сервере, запустить юнит, проверить логи
-- [ ] 6.4 Подключить агента к `https://v864391.hosted-by-vdsina.com/mcp`, прогнать сценарии из группы 5
-- [ ] 6.5 Убедиться, что ротация MCP-токена отзывает доступ агенту и не задевает браузер на телефоне и Mac
+- [x] 6.1 Завести `/etc/systemd/system/taskflow-mcp.service` (`PORT=8788`, `TASKFLOW_API=http://127.0.0.1:8787`, `TASKFLOW_DATA=/var/lib/taskflow`, `After=taskflow.service`, `Restart=always`)
+- [x] 6.2 Добавить в Caddy `handle /mcp* { reverse_proxy 127.0.0.1:8788 }` перед общим `handle`
+- [x] 6.3 Выполнить `npm install` на сервере, запустить юнит, проверить логи
+- [x] 6.4 Подключить агента к `https://v864391.hosted-by-vdsina.com/mcp`, прогнать сценарии из группы 5
+- [x] 6.5 Убедиться, что ротация MCP-токена отзывает доступ агенту и не задевает браузер на телефоне и Mac
 
 ## 7. Документация и переезд скилла
 
 - [x] 7.1 Описать в `README.md` и `README.ru.md` MCP-сервер, второй токен, команду подключения `claude mcp add --transport http`
 - [x] 7.2 Записать в `README` отклонение от OAuth 2.1 — что не реализован и почему
-- [ ] 7.3 **Проверить работу под корпоративным VPN.** Если домен не резолвится — прописать строку в `/etc/hosts` и задокументировать это как обязательный шаг настройки под VPN
-- [ ] 7.4 Переписать `SKILL.md` в `~/Devel/agents-ensemble/skills/taskflow/` с CLI на MCP-инструменты (правка в другом репозитории)
-- [ ] 7.5 Удалить `tf.py` и `__pycache__` там же — только после того, как MCP проверен, в том числе под VPN
+- [x] 7.3 **Проверить работу под корпоративным VPN.** Если домен не резолвится — прописать строку в `/etc/hosts` и задокументировать это как обязательный шаг настройки под VPN
+- [x] 7.4 Переписать `SKILL.md` в `~/Devel/agents-ensemble/skills/taskflow/` с CLI на MCP-инструменты (правка в другом репозитории)
+- [x] 7.5 Удалить `tf.py` и `__pycache__` там же — только после того, как MCP проверен, в том числе под VPN
