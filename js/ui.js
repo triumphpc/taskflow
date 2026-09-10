@@ -1,7 +1,8 @@
 // Отрисовка интерфейса: навигация, списки, редактор задачи, настройки.
 
-import { $, h, clear, append, todayStr, addDaysStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
-  combineDue, plural, debounce, oneLine, linkify, caretIndexAt } from './util.js';
+import { todayStr, addDaysStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
+  combineDue, plural, oneLine } from './core.js';
+import { $, h, clear, append, debounce, linkify, caretIndexAt } from './dom.js';
 import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
 import * as S from './sync.js';
 import * as M from './model.js';

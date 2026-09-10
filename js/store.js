@@ -1,7 +1,7 @@
 // Состояние приложения и его сохранение в localStorage.
 // Бэкенда нет: всё живёт в браузере, перенос между устройствами — экспорт/импорт JSON.
 
-import { uid } from './util.js';
+import { uid } from './core.js';
 
 const KEY = 'taskflow.state.v1';
 const SCHEMA = 1;

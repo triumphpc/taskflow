@@ -1,7 +1,8 @@
 // Точка входа: загрузка состояния, маршрутизация по разделам, горячие клавиши,
 // напоминания и синхронизация между устройствами.
 
-import { $, debounce, oneLine } from './util.js';
+import { oneLine } from './core.js';
+import { $, debounce } from './dom.js';
 import { state, load, subscribe } from './store.js';
 import * as M from './model.js';
 import * as S from './sync.js';

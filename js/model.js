@@ -3,8 +3,8 @@
 import { state, commit, normalizeTask, tombstone } from './store.js';
 import {
   uid, todayStr, addDaysStr, nextMondayStr, datePart, timePart, combineDue,
-  isAllDay, parseDue, isOverdue, fromDateStr, toDateStr,
-} from './util.js';
+  isAllDay, parseDue, isOverdue, fromDateStr, toDateStr, nextOccurrence,
+} from './core.js';
 
 export const PRIORITIES = {
   1: { id: 1, code: 'P1', name: 'Срочно и важно', hint: 'сделать сейчас', varName: '--p1' },
@@ -82,33 +82,6 @@ export function clearCompleted() {
 }
 
 // ---------- Повторы ----------
-
-/**
- * Следующая дата серии строго после `afterDateStr`.
- * Для месячного повтора день месяца сохраняется и подрезается по длине месяца.
- */
-export function nextOccurrence(fromDateStr_, repeat, afterDateStr = todayStr()) {
-  const interval = Math.max(1, repeat.interval || 1);
-  let cur = fromDateStr_;
-  let guard = 0;
-
-  if (repeat.freq === 'monthly') {
-    const anchorDay = fromDateStr(fromDateStr_).getDate();
-    let d = fromDateStr(fromDateStr_);
-    while (toDateStr(d) <= afterDateStr && guard++ < 600) {
-      const m = d.getMonth() + interval;
-      const y = d.getFullYear() + Math.floor(m / 12);
-      const mm = ((m % 12) + 12) % 12;
-      const lastDay = new Date(y, mm + 1, 0).getDate();
-      d = new Date(y, mm, Math.min(anchorDay, lastDay));
-    }
-    return toDateStr(d);
-  }
-
-  const step = repeat.freq === 'weekly' ? 7 * interval : interval;
-  while (cur <= afterDateStr && guard++ < 3000) cur = addDaysStr(cur, step);
-  return cur;
-}
 
 // ---------- Завершение ----------
 
@@ -431,4 +404,4 @@ export function markNotified(id) {
   commit('task:notified');
 }
 
-export { isOverdue };
+export { isOverdue, nextOccurrence };

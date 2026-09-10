@@ -1,7 +1,8 @@
 // Moments — планирование дня. Проводит по задачам, которые «висят» на сегодня,
 // и для каждой спрашивает: когда делать и какой приоритет.
 
-import { h, clear, fmtDue, fmtDayLabel, fmtDateShort, timePart, combineDue, plural, linkify } from './util.js';
+import { fmtDue, fmtDayLabel, fmtDateShort, timePart, combineDue, plural } from './core.js';
+import { h, clear, linkify } from './dom.js';
 import { state } from './store.js';
 import * as M from './model.js';
 import { openSheet, toast, ctx, openEditor } from './ui.js';
