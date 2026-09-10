@@ -24,6 +24,7 @@
 - **Локальные напоминания** — пока вкладка или установленное приложение открыты.
 - **Тема** — светлая, тёмная, как в системе.
 - **Синхронизация между устройствами** — задачи хранятся на вашем сервере, и Mac, iPhone и любой браузер видят один список. Работает офлайн: правки копятся локально и уезжают, когда появляется сеть.
+- **Доступ для агента** — отдельный MCP-сервер даёт Claude Code и другим MCP-клиентам те же девять операций над задачами (свой токен, отдельный от синхронизации).
 - **Данные** — ваши и только ваши: свой сервер плюс локальная копия в браузере. Экспорт и импорт JSON для резервной копии.
 
 Быстрый ввод понимает подсказки: `Купить молоко завтра 18:30 !1` → задача на завтра
@@ -97,6 +98,81 @@ TaskFlow → http://127.0.0.1:8787
 
 Всё, кроме `/api/ping`, требует заголовок `Authorization: Bearer <токен>`.
 Токен сравнивается за постоянное время, каталог `data/` статикой не отдаётся.
+
+---
+
+## Доступ для агента (MCP)
+
+Рядом с основным сервером может работать второй процесс — `mcp.mjs`. Он говорит
+по [Model Context Protocol](https://modelcontextprotocol.io) и даёт агенту
+(Claude Code и любому другому MCP-клиенту) те же операции над задачами, что есть
+в приложении:
+
+| Инструмент | Что делает |
+|---|---|
+| `tasks_list` | список задач раздела: `today`, `tomorrow`, `upcoming`, `someday`, `all`, `done`, `overdue` |
+| `task_get` | одна задача целиком: заметки, подзадачи, повтор |
+| `task_add` | создать задачу за один вызов: срок, приоритет, заметки, подзадачи, повтор |
+| `task_edit` | изменить поля; `clear_due` снимает срок вместе с повтором |
+| `task_snooze` | перенести срок; время суток сохраняется |
+| `task_done` | отметить выполненной или вернуть в работу; повторяющаяся уезжает на следующую дату серии |
+| `subtask_add` | добавить подзадачу |
+| `subtask_toggle` | переключить готовность подзадачи |
+| `task_delete` | удалить задачу — только с `confirm: true` |
+
+Задачу можно называть словами: `task: "молоко"` найдёт её по названию. Если
+подходит несколько — инструмент вернёт список кандидатов и **ничего не изменит**.
+Сроки тоже понимаются словами: `сегодня`, `завтра`, `послезавтра`, `понедельник`,
+`+3`, `2026-09-15`, `завтра 18:30`.
+
+Запуск:
+
+```bash
+npm install             # единственная зависимость — @modelcontextprotocol/sdk
+node mcp.mjs            # http://127.0.0.1:8788/mcp
+```
+
+Для `mcp.mjs` нужен Node 20+ (требование SDK); самому приложению и `serve.mjs`
+по-прежнему хватает Node 18.
+
+`node serve.mjs` при этом по-прежнему работает без `npm install`: SDK нужен
+только файлу `mcp.mjs`, и импортируется он динамически.
+
+При старте печатается токен и готовая строка подключения:
+
+```
+TaskFlow MCP → http://127.0.0.1:8788/mcp
+Основной сервер: http://127.0.0.1:8787
+Токен MCP: 8Kx2n5Qw...
+Подключение: claude mcp add --transport http taskflow http://127.0.0.1:8788/mcp --header "Authorization: Bearer 8Kx2n5Qw..."
+```
+
+**Токен у MCP свой, отдельный от токена синхронизации.** Синхронизационный вбит
+в браузеры на Mac и iPhone; MCP-токен лежит в `data/mcp-token.txt` и
+переопределяется переменной `TASKFLOW_MCP_TOKEN`. Удалите файл и перезапустите
+`mcp.mjs` — агент отключится, браузеры ничего не заметят.
+
+Файл с задачами `mcp.mjs` не трогает: читает через `GET /api/state`, пишет через
+`POST /api/sync` — ровно как ещё одно устройство. Хозяин у файла один,
+`serve.mjs`, а правки агента сливаются по тем же правилам, что и правки с телефона.
+
+Переменные окружения: `PORT` (8788), `TASKFLOW_API` (адрес основного сервера),
+`TASKFLOW_DATA`, `TASKFLOW_MCP_TOKEN`, `TASKFLOW_TOKEN`, `TASKFLOW_MCP_ORIGINS`
+(дополнительные допустимые `Origin` через запятую).
+
+### Почему Bearer-токен, а не OAuth 2.1
+
+Спецификация MCP для HTTP-транспорта предлагает авторизацию по OAuth 2.1.
+Здесь она сознательно не используется: это инструмент на одного человека, и
+authorization server, регистрация клиента и refresh-токены — лишний слой ради
+доступа к собственному списку дел.
+
+Вместо этого — Bearer-токен со сравнением за постоянное время (как уже сделано
+в `sync.mjs`), прослушивание только `127.0.0.1` и проверка заголовка `Origin`
+(прямая рекомендация спецификации против DNS rebinding); наружу порт выводит
+Caddy по HTTPS. Отклонение записано здесь намеренно: если появится второй
+пользователь или сторонний клиент, к этому решению придётся вернуться — и тоже
+осознанно.
 
 ---
 
@@ -176,6 +252,59 @@ server {
 На iPhone добавьте приложение на экран «Домой» (Safari → «Поделиться» →
 «На экран Домой»).
 
+### 4. MCP-сервер (необязательно)
+
+Нужен, только если к списку задач ходит агент. Отдельный юнит
+`/etc/systemd/system/taskflow-mcp.service`:
+
+```ini
+[Unit]
+Description=TaskFlow MCP
+After=network.target taskflow.service
+Wants=taskflow.service
+
+[Service]
+Type=simple
+User=taskflow
+WorkingDirectory=/var/www/taskflow
+Environment=PORT=8788
+Environment=TASKFLOW_API=http://127.0.0.1:8787
+Environment=TASKFLOW_DATA=/var/lib/taskflow
+ExecStart=/usr/bin/node mcp.mjs
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+cd /var/www/taskflow && sudo -u taskflow npm install
+sudo systemctl enable --now taskflow-mcp
+sudo journalctl -u taskflow-mcp | grep Подключение   # готовая строка для клиента
+```
+
+`/mcp` уходит на другой порт, поэтому в Caddy маршрут описывается отдельно и
+**до** общего:
+
+```caddyfile
+tasks.example.com {
+    encode gzip
+    handle /mcp* {
+        reverse_proxy 127.0.0.1:8788
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8787
+    }
+}
+```
+
+Подключение клиента к серверу — тот же токен, но по HTTPS-адресу:
+
+```bash
+claude mcp add --transport http taskflow https://tasks.example.com/mcp \
+  --header "Authorization: Bearer <токен из journalctl>"
+```
+
 ### Старый вариант: только статика
 
 Если синхронизация не нужна, файлы по-прежнему можно раздать как статику —
@@ -247,7 +376,8 @@ server {
 ```
 index.html              разметка оболочки
 styles.css              тема, вёрстка, адаптив
-js/util.js              DOM-хелперы, работа с датами
+js/core.js              даты, повторы, форматирование — общее для браузера и сервера
+js/dom.js               DOM-хелперы
 js/store.js             состояние, localStorage, экспорт/импорт
 js/model.js             задачи: CRUD, повторы, выборки для разделов, ручной порядок
 js/ui.js                отрисовка, перетаскивание, редактор задачи, настройки
@@ -257,6 +387,8 @@ js/app.js               точка входа, маршрутизация, го�
 sw.js                   офлайн-кеш оболочки
 serve.mjs               сервер: статика + /api
 sync.mjs                хранилище задач на сервере и правила слияния
+mcp.mjs                 MCP-сервер для агента (нужен npm install)
+package.json            единственная зависимость — MCP SDK, только для mcp.mjs
 data/                   задачи и токен (создаётся при первом запуске, в git не попадает)
 manifest.webmanifest    манифест PWA
 ```
@@ -288,6 +420,8 @@ into the server's, last write wins per task, and deletions are kept as 30-day
 tombstones so they do not come back. Each browser keeps a `localStorage` copy, so
 the app works offline and catches up when the network returns. PWA install
 requires HTTPS (or `http://localhost`) — see the deployment section above.
+An optional MCP server (`mcp.mjs`, one dependency) exposes the same task
+operations to AI agents over Streamable HTTP with its own bearer token.
 Run locally with `node serve.mjs`. MIT licensed.
 
 ---

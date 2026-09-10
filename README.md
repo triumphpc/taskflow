@@ -29,6 +29,7 @@ same list follows you from your Mac to your iPhone.
 - **Local reminders** — while the tab or the installed app is open.
 - **Theme** — light, dark, or follow the system.
 - **Cross-device sync** — tasks live on your own server, so your Mac, your iPhone, and any browser all see one list. It works offline: edits pile up locally and are pushed once the network is back.
+- **Agent access** — an optional MCP server exposes the same nine task operations to Claude Code and other MCP clients, behind its own token, separate from sync.
 - **Your data stays yours** — your own server plus a local copy in the browser. JSON export and import for backups.
 
 Quick entry understands inline hints: `Купить молоко завтра 18:30 !1` creates a
@@ -103,6 +104,81 @@ only tasks are synchronised.
 Everything except `/api/ping` requires an `Authorization: Bearer <token>` header.
 The token is compared in constant time, and the `data/` directory is never served
 as static content.
+
+---
+
+## Agent access (MCP)
+
+A second process, `mcp.mjs`, can run alongside the main server. It speaks the
+[Model Context Protocol](https://modelcontextprotocol.io) and gives an agent
+(Claude Code or any other MCP client) the same task operations the app has:
+
+| Tool | What it does |
+|---|---|
+| `tasks_list` | tasks in a view: `today`, `tomorrow`, `upcoming`, `someday`, `all`, `done`, `overdue` |
+| `task_get` | one task in full: notes, subtasks, recurrence |
+| `task_add` | create a task in a single call: due date, priority, notes, subtasks, recurrence |
+| `task_edit` | change fields; `clear_due` drops the due date along with the recurrence |
+| `task_snooze` | move the due date; the time of day is kept |
+| `task_done` | complete or reopen; a recurring task moves to the next date in the series |
+| `subtask_add` | add a subtask |
+| `subtask_toggle` | toggle a subtask |
+| `task_delete` | delete a task — only with `confirm: true` |
+
+Tasks can be named in words: `task: "milk"` finds it by title. If several match,
+the tool returns the candidates and **changes nothing**. Due dates are words too:
+`today`, `tomorrow`, `monday`, `next-week`, `+3`, `2026-09-15`, `tomorrow 18:30`
+(the Russian equivalents work as well).
+
+Running it:
+
+```bash
+npm install             # the only dependency is @modelcontextprotocol/sdk
+node mcp.mjs            # http://127.0.0.1:8788/mcp
+```
+
+`mcp.mjs` needs Node 20+ (the SDK requires it); the app and `serve.mjs` are still
+fine on Node 18.
+
+`node serve.mjs` still runs with no `npm install` at all: the SDK is needed by
+`mcp.mjs` alone and is imported dynamically.
+
+On start it prints the token and a ready-to-paste connection command:
+
+```
+TaskFlow MCP → http://127.0.0.1:8788/mcp
+Основной сервер: http://127.0.0.1:8787
+Токен MCP: 8Kx2n5Qw...
+Подключение: claude mcp add --transport http taskflow http://127.0.0.1:8788/mcp --header "Authorization: Bearer 8Kx2n5Qw..."
+```
+
+**The MCP token is its own, separate from the sync token.** The sync token is
+typed into the browsers on your Mac and iPhone; the MCP token lives in
+`data/mcp-token.txt` and is overridden by `TASKFLOW_MCP_TOKEN`. Delete the file
+and restart `mcp.mjs` and the agent loses access while the browsers notice
+nothing.
+
+`mcp.mjs` never touches the data file: it reads through `GET /api/state` and
+writes through `POST /api/sync`, exactly like one more device. The file has a
+single owner, `serve.mjs`, and the agent's edits merge under the same rules as
+edits from the phone.
+
+Environment variables: `PORT` (8788), `TASKFLOW_API` (the main server's address),
+`TASKFLOW_DATA`, `TASKFLOW_MCP_TOKEN`, `TASKFLOW_TOKEN`, `TASKFLOW_MCP_ORIGINS`
+(extra allowed `Origin` values, comma-separated).
+
+### Why a bearer token and not OAuth 2.1
+
+The MCP specification suggests OAuth 2.1 for the HTTP transport. It is
+deliberately not used here: this is a single-person tool, and an authorization
+server, client registration and refresh tokens are a layer too many for reaching
+your own to-do list.
+
+Instead: a bearer token compared in constant time (as `sync.mjs` already does),
+listening on `127.0.0.1` only, and an `Origin` check — the specification's own
+recommendation against DNS rebinding; Caddy publishes the port over HTTPS. The
+deviation is written down on purpose: if a second user or a third-party client
+ever shows up, this decision has to be revisited just as deliberately.
 
 ---
 
@@ -182,6 +258,59 @@ Open `https://tasks.example.com` on the Mac and on the iPhone and paste the same
 token into **Settings → Cross-device sync** → "Connect". On iPhone, add the app
 to the Home Screen (Safari → Share → Add to Home Screen).
 
+### 4. The MCP server (optional)
+
+Only needed if an agent talks to your task list. A separate unit,
+`/etc/systemd/system/taskflow-mcp.service`:
+
+```ini
+[Unit]
+Description=TaskFlow MCP
+After=network.target taskflow.service
+Wants=taskflow.service
+
+[Service]
+Type=simple
+User=taskflow
+WorkingDirectory=/var/www/taskflow
+Environment=PORT=8788
+Environment=TASKFLOW_API=http://127.0.0.1:8787
+Environment=TASKFLOW_DATA=/var/lib/taskflow
+ExecStart=/usr/bin/node mcp.mjs
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+cd /var/www/taskflow && sudo -u taskflow npm install
+sudo systemctl enable --now taskflow-mcp
+sudo journalctl -u taskflow-mcp | grep Подключение   # the ready-made client command
+```
+
+`/mcp` goes to a different port, so in Caddy it gets its own route **before** the
+general one:
+
+```caddyfile
+tasks.example.com {
+    encode gzip
+    handle /mcp* {
+        reverse_proxy 127.0.0.1:8788
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8787
+    }
+}
+```
+
+Connecting a client to the server uses the same token over the HTTPS address:
+
+```bash
+claude mcp add --transport http taskflow https://tasks.example.com/mcp \
+  --header "Authorization: Bearer <token from journalctl>"
+```
+
 ### The old way: static only
 
 If you do not need sync, the files can still be served as plain static content —
@@ -252,7 +381,8 @@ the other device (merge by modification time, or full replace).
 ```
 index.html              shell markup
 styles.css              theme, layout, responsive rules
-js/util.js              DOM helpers, date handling
+js/core.js              dates, recurrence, formatting — shared by browser and server
+js/dom.js               DOM helpers
 js/store.js             state, localStorage, export/import
 js/model.js             tasks: CRUD, recurrence, per-view queries, manual order
 js/ui.js                rendering, drag and drop, task editor, settings
@@ -262,6 +392,8 @@ js/app.js               entry point, routing, shortcuts, reminders
 sw.js                   offline shell cache
 serve.mjs               server: static files + /api
 sync.mjs                server-side task storage and merge rules
+mcp.mjs                 MCP server for agents (needs npm install)
+package.json            the single dependency — the MCP SDK, used only by mcp.mjs
 data/                   tasks and token (created on first run, never committed)
 manifest.webmanifest    PWA manifest
 ```
