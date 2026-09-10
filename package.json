@@ -1,0 +1,17 @@
+{
+  "name": "taskflow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Список задач: браузерное приложение, сервер синхронизации и MCP-сервер для агента",
+  "scripts": {
+    "start": "node serve.mjs",
+    "mcp": "node mcp.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
