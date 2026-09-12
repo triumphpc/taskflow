@@ -1,6 +1,6 @@
 // Отрисовка интерфейса: навигация, списки, редактор задачи, настройки.
 
-import { todayStr, addDaysStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
+import { todayStr, addDaysStr, toDateStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
   combineDue, plural, oneLine } from './core.js';
 import { $, h, clear, append, debounce, linkify, caretIndexAt } from './dom.js';
 import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
@@ -79,8 +79,8 @@ export function confirmSheet({ title, text, okLabel = 'Да', danger = false }) 
 
 // ---------- Навигация ----------
 
-const NAV_ITEMS = ['today', 'tomorrow', 'upcoming', 'someday', 'all', 'done'];
-const NAV_MOBILE = ['today', 'upcoming', 'all', 'done'];
+const NAV_ITEMS = ['today', 'inbox', 'tomorrow', 'upcoming', 'all', 'done'];
+const NAV_MOBILE = ['today', 'inbox', 'upcoming', 'all', 'done'];
 
 function navButton(id, counts) {
   const v = M.VIEWS[id];
@@ -120,7 +120,11 @@ function subtitleFor(view) {
   }
   if (view === 'tomorrow') return c.tomorrow ? `${c.tomorrow} ${plural(c.tomorrow, 'задача', 'задачи', 'задач')}` : 'Пока ничего не запланировано';
   if (view === 'upcoming') return c.upcoming ? `${c.upcoming} ${plural(c.upcoming, 'задача', 'задачи', 'задач')} с датой` : 'Нет задач с датой';
-  if (view === 'someday') return 'Задачи без даты — их подхватит Moments';
+  if (view === 'inbox') {
+    return c.inbox
+      ? `${c.inbox} ${plural(c.inbox, 'запись', 'записи', 'записей')} на разбор`
+      : 'Разбирать нечего';
+  }
   if (view === 'all') return `${c.all} активных · ${c.done} выполнено`;
   if (view === 'done') return c.done ? `${c.done} ${plural(c.done, 'задача', 'задачи', 'задач')}` : 'Пока пусто';
   return '';
@@ -541,6 +545,87 @@ export function focusComposer() {
   return true;
 }
 
+// ---------- Входящее ----------
+
+/** Как подписывать источник. Ключи — те же, что и в нормализации записи. */
+const SOURCE_LABELS = {
+  gmail: ['✉', 'Почта'],
+  telegram: ['➤', 'Телеграм'],
+  web: ['◍', 'Веб'],
+  calendar: ['▤', 'Календарь'],
+  agent: ['✧', 'Агент'],
+  manual: ['✎', 'Вручную'],
+};
+
+/** «Сегодня, 14:30» для метки времени, а не для даты задачи. */
+function fmtStamp(ms) {
+  const d = new Date(ms);
+  return `${fmtDayLabel(toDateStr(d))}, ${fmtTime(d)}`;
+}
+
+/** Строка «откуда пришло» с переходом к источнику. Без источника — ничего. */
+export function sourceLine(task) {
+  const src = task.source;
+  if (!src) return null;
+  const [icon, label] = SOURCE_LABELS[src.kind] || SOURCE_LABELS.manual;
+  return h('div', { class: 'inbox-src' },
+    h('span', { class: 'ico', 'aria-hidden': 'true' }, icon),
+    h('span', null, src.title ? `${label} · ${oneLine(src.title)}` : label),
+    h('span', { class: 'at' }, src.at ? fmtStamp(src.at) : ''),
+    src.url
+      ? h('a', {
+        class: 'inbox-link', href: src.url, target: '_blank', rel: 'noopener',
+        title: 'Открыть источник', 'aria-label': 'Открыть источник',
+      }, '↗')
+      : null);
+}
+
+/** Лента агента, только для чтения. Пустая лента — ничего. */
+export function agentFeed(task) {
+  if (!task.agentNotes.length) return null;
+  return h('ul', { class: 'inbox-feed' }, ...task.agentNotes.map((n) => h('li', null,
+    h('span', { class: 'at' }, fmtStamp(n.at)),
+    h('span', null, linkify(n.text)))));
+}
+
+/**
+ * Карточка входящего. Намеренно не строка задачи: ни даты, ни приоритета,
+ * ни кружков переноса — планировать здесь нечего, здесь только разбирают.
+ */
+function inboxCard(task) {
+  return h('li', { class: 'inbox-card', dataset: { id: task.id } },
+    sourceLine(task),
+    h('div', { class: 'inbox-title' }, task.title ? linkify(task.title) : 'Без названия'),
+    agentFeed(task),
+    // Ленты разведены осознанно: notes пишет человек, agentNotes — агент.
+    // Смешать их значило бы позволить агенту незаметно переписать чужой текст.
+    task.notes ? h('div', { class: 'inbox-notes' }, linkify(task.notes)) : null,
+    h('div', { class: 'inbox-actions' },
+      h('button', {
+        class: 'btn btn-primary',
+        onclick: () => {
+          // Дата — сегодняшняя: без неё запись осталась бы входящей, а редактор
+          // открылся бы на записи, которой в разделе задач ещё нет.
+          if (!M.inboxToTask(task.id)) return;
+          ctx.refresh();
+          openEditor(task.id);
+        },
+      }, 'В задачу'),
+      h('button', {
+        class: 'btn btn-ghost',
+        onclick: () => {
+          const snapshot = { ...task };
+          M.deleteTask(task.id);
+          toast('Отброшено', {
+            actionLabel: 'Вернуть',
+            // updatedAt обновляем: иначе запись окажется старше собственного
+            // надгробия и сервер удалит её снова при первой же синхронизации.
+            action: () => { M.createTask({ ...snapshot, updatedAt: Date.now() }); },
+          });
+        },
+      }, 'Отбросить')));
+}
+
 // ---------- Разделы со списками ----------
 
 function emptyState(view) {
@@ -548,7 +633,7 @@ function emptyState(view) {
     today: ['☀︎', 'На сегодня всё чисто', 'Добавьте задачу выше или запустите Moments — он разложит по времени всё, что висит.'],
     tomorrow: ['→', 'На завтра пусто', 'Хорошая возможность заранее разгрузить сегодня.'],
     upcoming: ['▤', 'Впереди свободно', 'Задачи с датой появятся здесь, сгруппированные по дням.'],
-    someday: ['◇', 'Нет задач без даты', 'Сюда попадает всё, чему вы ещё не назначили день.'],
+    inbox: ['✉', 'Разбирать нечего', 'Сюда попадает всё, чему ещё не назначен день, — и то, что приносит агент.'],
     all: ['≡', 'Задач нет', 'Начните с первой — поле ввода сверху.'],
     done: ['✓', 'Выполненного пока нет', 'Отмечайте задачи — они соберутся здесь.'],
   };
@@ -561,6 +646,15 @@ function emptyState(view) {
 
 function renderListView(root, view) {
   if (view !== 'done') root.append(composer());
+
+  if (view === 'inbox') {
+    const items = M.inboxItems();
+    if (!items.length) { root.append(emptyState(view)); return; }
+    // Плоский список: без групп и без перетаскивания — сортировать нечего,
+    // порядок задаёт время появления.
+    root.append(h('ul', { class: 'inbox-list' }, ...items.map(inboxCard)));
+    return;
+  }
 
   const groups = M.groupsForView(view);
   const total = groups.reduce((n, g) => n + g.tasks.length, 0);
@@ -820,11 +914,25 @@ export function openEditor(taskId) {
   }
   renderSubs();
 
+  // --- Откуда пришла задача и что дописал агент.
+  // Только для чтения: правка ленты агента человеком превратила бы её в те же
+  // заметки, а смысл разделения — знать, кто что написал.
+  const srcLine = sourceLine(task);
+  const feed = agentFeed(task);
+  const srcNode = srcLine
+    ? h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Источник'), srcLine)
+    : null;
+  const feedNode = feed
+    ? h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Заметки агента'), feed)
+    : null;
+
   const sheet = openSheet({
     title: 'Задача',
     bodyNodes: [
       h('div', { class: 'field' }, titleInput),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Заметки'), notesView, notesInput),
+      srcNode,
+      feedNode,
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Подзадачи'), subWrap),
       h('div', { class: 'field' },
         h('span', { class: 'field-label' }, 'Когда'),

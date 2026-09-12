@@ -272,6 +272,49 @@ ul { list-style: none; margin: 0; padding: 0; }
 .task[data-p="3"] { --prio: var(--p3); }
 .task[data-p="4"] { --prio: transparent; }
 
+/* ---------- Входящие ---------- */
+
+/* Карточка, а не строка списка: у входящего нет ни даты, ни приоритета,
+   зато есть источник и лента агента — им нужна высота, а не колонка. */
+.inbox-list { display: grid; gap: 10px; }
+.inbox-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: grid; gap: 8px;
+}
+.inbox-src {
+  display: flex; align-items: baseline; gap: 7px;
+  font-size: 12px; color: var(--text-faint); min-width: 0;
+}
+.inbox-src > span:nth-child(2) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.inbox-src .ico { font-size: 13px; }
+.inbox-src .at { margin-left: auto; flex: none; }
+.inbox-link { flex: none; text-decoration: none; color: var(--text-faint); font-size: 14px; }
+.inbox-link:hover { color: var(--accent); }
+
+.inbox-title { font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+
+/* Лента агента — с отбивкой слева: видно, что писал не человек. */
+.inbox-feed {
+  display: grid; gap: 6px;
+  border-left: 2px solid var(--accent-soft); padding-left: 10px;
+}
+.inbox-feed li { display: grid; gap: 2px; font-size: 13px; line-height: 1.45; color: var(--text-dim); }
+.inbox-feed .at { font-size: 11px; color: var(--text-faint); }
+
+/* Заметка человека — обычным текстом, без отбивки: это не цитата. */
+.inbox-notes {
+  font-size: 13px; line-height: 1.45; color: var(--text-dim);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+.inbox-actions { display: flex; gap: 8px; margin-top: 2px; }
+
+
 .check {
   flex: none; width: 20px; height: 20px; margin-top: 1px;
   border: 1.8px solid var(--text-faint); border-radius: 50%;

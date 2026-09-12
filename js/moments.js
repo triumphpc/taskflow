@@ -5,7 +5,7 @@ import { fmtDue, fmtDayLabel, fmtDateShort, timePart, combineDue, plural } from 
 import { h, clear, linkify } from './dom.js';
 import { state } from './store.js';
 import * as M from './model.js';
-import { openSheet, toast, ctx, openEditor } from './ui.js';
+import { openSheet, toast, ctx, openEditor, sourceLine, agentFeed } from './ui.js';
 
 const DAY_PARTS = [
   ['morning', 'Утро'],
@@ -33,7 +33,7 @@ export function openMoments() {
       bodyNodes: h('div', { class: 'empty' },
         h('div', { class: 'big' }, '◎'),
         h('p', { style: { fontWeight: '600', color: 'var(--text-dim)', marginBottom: '4px' } }, 'Планировать нечего'),
-        h('p', null, 'Нет ни просроченных задач, ни задач на сегодня, ни задач без даты.')),
+        h('p', null, 'Ни входящих на разбор, ни просроченных задач, ни задач на сегодня.')),
       footNodes: [h('span', { class: 'spacer' }), closeBtn],
     });
     closeBtn.addEventListener('click', () => emptySheet.close());
@@ -78,11 +78,17 @@ export function openMoments() {
     footInfo.textContent = `${index + 1} из ${queue.length}`;
 
     // --- Карточка задачи
+    // У входящего строка «Сейчас: …» бессмысленна — даты у него нет по
+    // определению. Вместо неё показываем то, ради чего его вообще открыли:
+    // откуда пришло и что успел выяснить агент.
+    const isInbox = task.kind === 'inbox';
     const card = h('div', { class: 'moments-task' },
+      isInbox ? sourceLine(task) : null,
       h('h3', null, task.title || 'Без названия'),
+      isInbox ? agentFeed(task) : null,
       task.notes ? h('p', { class: 'notes' }, linkify(clampNotes(task.notes))) : null,
-      h('p', { class: 'cur' },
-        task.due ? `Сейчас: ${fmtDue(task.due)}` : 'Сейчас: без даты',
+      isInbox ? null : h('p', { class: 'cur' },
+        `Сейчас: ${fmtDue(task.due)}`,
         task.subtasks.length ? ` · ${task.subtasks.length} ${plural(task.subtasks.length, 'подзадача', 'подзадачи', 'подзадач')}` : '',
         task.repeat ? ` · ${M.repeatLabel(task.repeat)}` : ''));
 
@@ -134,10 +140,17 @@ export function openMoments() {
       mk('Завтра', M.QUICK_DATES.tomorrow, fmtDateShort(M.QUICK_DATES.tomorrow())),
       mk('Через 2 дня', M.QUICK_DATES.in2days, fmtDateShort(M.QUICK_DATES.in2days())),
       mk('На следующей неделе', M.QUICK_DATES.nextWeek, fmtDateShort(M.QUICK_DATES.nextWeek())),
-      h('button', {
-        class: 'when-btn',
-        onclick: () => applyAndNext({ due: null, repeat: null }, 'Убрано из расписания'),
-      }, 'Без даты', h('small', null, 'вернуться к ней позже')));
+      isInbox
+        ? h('button', {
+          class: 'when-btn',
+          // Ответа нет — значит и правки нет: запись без даты остаётся входящей
+          // и вернётся в очередь следующего прохода.
+          onclick: () => { stats.skipped++; next(); },
+        }, 'Пока не разбираю', h('small', null, 'останется во «Входящих»'))
+        : h('button', {
+          class: 'when-btn',
+          onclick: () => applyAndNext({ due: null, repeat: null }, 'Вернулось во «Входящие»'),
+        }, 'Во входящие', h('small', null, 'снять дату, разобрать позже')));
 
     // --- Прочие действия
     const actions = h('div', { class: 'chips', style: { marginTop: '14px' } },

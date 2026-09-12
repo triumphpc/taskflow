@@ -168,6 +168,32 @@ function normalizeTask(t) {
     createdAt: t.createdAt || Date.now(),
     updatedAt: t.updatedAt || Date.now(),
     order: typeof t.order === 'number' ? t.order : Date.now(),
+    // Те же правила, что в js/store.js: тип выводится из даты, а не хранится.
+    kind: deriveKind(t),
+    source: normalizeSource(t.source),
+    agentNotes: Array.isArray(t.agentNotes)
+      ? t.agentNotes
+        .filter((n) => n && n.text)
+        .map((n) => ({ at: Number(n.at) || Date.now(), text: String(n.text) }))
+      : [],
+  };
+}
+
+/** Задача или входящее. Активная запись без даты — всегда входящее. */
+function deriveKind(t) {
+  return t.done || t.due ? 'task' : 'inbox';
+}
+
+const SOURCE_KINDS = ['gmail', 'telegram', 'web', 'calendar', 'agent', 'manual'];
+
+function normalizeSource(s) {
+  if (!s || typeof s !== 'object') return null;
+  return {
+    kind: SOURCE_KINDS.includes(s.kind) ? s.kind : 'manual',
+    url: s.url || null,
+    title: s.title || '',
+    ref: s.ref || null,
+    at: Number(s.at) || Date.now(),
   };
 }
 
@@ -253,28 +279,30 @@ function resolveDue(input) {
 
 // ---------- Разделы и порядок ----------
 
-const SECTIONS = ['today', 'tomorrow', 'upcoming', 'someday', 'all', 'done', 'overdue'];
+const SECTIONS = ['today', 'tomorrow', 'upcoming', 'all', 'done', 'overdue'];
 
 const SECTION_TITLES = {
   today: 'Сегодня', tomorrow: 'Завтра', upcoming: 'Ближайшие',
-  someday: 'Без даты', all: 'Все задачи', done: 'Выполнено', overdue: 'Просрочено',
+  all: 'Все задачи', done: 'Выполнено', overdue: 'Просрочено',
 };
 
 function inSection(t, section, today, tomorrow) {
   if (section === 'done') return t.done;
   if (t.done) return false;
+  // Неразобранное входящее — не задача: в разделах задач его быть не должно,
+  // включая «Все задачи». Для него есть inbox_list.
+  if (t.kind === 'inbox') return false;
   const d = datePart(t.due);
   if (section === 'today') return !!d && d <= today;      // «Сегодня» в приложении включает просроченное
   if (section === 'tomorrow') return d === tomorrow;
   if (section === 'upcoming') return !!d && d > today;
-  if (section === 'someday') return !d;
   if (section === 'overdue') return isOverdue(t.due);
   return true;                                            // all
 }
 
 // Тот же порядок, что в приложении: сначала дата, потом время внутри дня, потом
-// приоритет. Задачи без даты идут в конец — в приложении это отдельная группа
-// «Без даты», и она последняя.
+// приоритет. Записи без даты сюда не попадают вовсе — активная запись без даты
+// это входящее, а входящие отсеиваются в inSection.
 const byTimeThenPriority = (a, b) => {
   const da = datePart(a.due), db = datePart(b.due);
   if (!da !== !db) return da ? -1 : 1;
@@ -286,11 +314,6 @@ const byTimeThenPriority = (a, b) => {
   return a.priority - b.priority;
 };
 
-const byPriorityThenTime = (a, b) => {
-  if (a.priority !== b.priority) return a.priority - b.priority;
-  return (a.order || 0) - (b.order || 0);
-};
-
 // ---------- Вывод ----------
 
 const shortId = (id) => String(id).slice(0, 8);
@@ -300,6 +323,7 @@ function taskLine(t) {
   const parts = [`${shortId(t.id)}  ${mark} P${t.priority}  ${oneLine(t.title)}`];
   const meta = [];
   if (t.due) meta.push(fmtDue(t.due) + (!t.done && isOverdue(t.due) ? ' · просрочено' : ''));
+  else if (t.kind === 'inbox') meta.push(sourceLabel(t));
   else meta.push('без даты');
   if (t.repeat) meta.push(repeatLabel(t.repeat));
   const subs = t.subtasks.length;
@@ -309,9 +333,34 @@ function taskLine(t) {
   return parts.join(' ');
 }
 
+/** «почта · Счёт за апрель» — откуда пришло входящее. */
+function sourceLabel(t) {
+  const s = t.source;
+  if (!s) return 'входящее';
+  const name = SOURCE_TITLES[s.kind] || s.kind;
+  return s.title ? `${name} · ${oneLine(s.title)}` : name;
+}
+
+/** «пт, 12 сентября, 14:30» по местному времени — метка, а не срок задачи. */
+function fmtStamp(ms) {
+  const d = new Date(ms);
+  return fmtDue(`${toDateStr(d)}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+}
+
+const SOURCE_TITLES = {
+  gmail: 'почта', telegram: 'телеграм', web: 'веб',
+  calendar: 'календарь', agent: 'агент', manual: 'вручную',
+};
+
 function taskDetails(t) {
   const out = [taskLine(t), `id: ${t.id}`];
+  if (t.source?.url) out.push(`Источник: ${t.source.url}`);
+  if (t.source?.ref) out.push(`Ссылка источника: ${t.source.ref}`);
   if (t.notes) out.push('Заметки:', ...String(t.notes).split('\n').map((l) => '  ' + l));
+  if (t.agentNotes.length) {
+    out.push('Заметки агента:');
+    for (const n of t.agentNotes) out.push(`  ${fmtStamp(n.at)} — ${n.text}`);
+  }
   if (t.subtasks.length) {
     out.push('Подзадачи:');
     for (const s of t.subtasks) out.push(`  ${shortId(s.id)}  ${s.done ? '✓' : '☐'} ${s.title}`);
@@ -363,7 +412,7 @@ function findSubtask(task, query) {
   );
 }
 
-const touch = (t) => { t.updatedAt = Date.now(); return t; };
+const touch = (t) => { t.updatedAt = Date.now(); t.kind = deriveKind(t); return t; };
 
 /** Отправляет изменённую задачу на сервер и возвращает её же. */
 async function saveTask(t) {
@@ -394,7 +443,7 @@ const everyArg = { type: 'integer', minimum: 1, description: 'Интервал �
 const TOOLS = [
   {
     name: 'tasks_list',
-    description: 'Список задач раздела: today, tomorrow, upcoming, someday, all, done, overdue.',
+    description: 'Список задач раздела: today, tomorrow, upcoming, all, done, overdue. Неразобранные входящие сюда не попадают — для них inbox_list.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -411,7 +460,6 @@ const TOOLS = [
       const tomorrow = addDaysStr(today, 1);
       const list = all.filter((t) => inSection(t, section, today, tomorrow));
       if (section === 'done') list.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
-      else if (section === 'someday') list.sort(byPriorityThenTime);
       else list.sort(byTimeThenPriority);
 
       const head = `${SECTION_TITLES[section]}: ${list.length} ${plural(list.length, 'задача', 'задачи', 'задач')}`;
@@ -464,7 +512,9 @@ const TOOLS = [
         throw new ToolError('Повтор без даты бессмыслен: задайте due.');
       }
       await pushTasks([t]);
-      return `Создана задача:\n${taskLine(t)}`;
+      // Без даты запись становится входящим — говорим об этом прямо, чтобы
+      // агент не считал, что задача уже стоит в расписании.
+      return `${t.kind === 'inbox' ? 'Создано входящее (даты нет — попадёт на разбор)' : 'Создана задача'}:\n${taskLine(t)}`;
     },
   },
   {
@@ -620,6 +670,113 @@ const TOOLS = [
       }
       await pushTasks([], [{ id: t.id, at: Date.now() }]);
       return `Удалена задача «${oneLine(t.title)}» (${shortId(t.id)}).`;
+    },
+  },
+  {
+    name: 'inbox_list',
+    description: 'Неразобранные входящие: то, что положил агент или человек без даты. Свежие сверху.',
+    inputSchema: {
+      type: 'object',
+      properties: { verbose: { type: 'boolean', description: 'Показать заметки агента и подзадачи.' } },
+    },
+    async run({ verbose = false }) {
+      const list = (await fetchTasks())
+        .filter((t) => t.kind === 'inbox')
+        .sort((a, b) => (b.source?.at || b.createdAt || 0) - (a.source?.at || a.createdAt || 0));
+      const head = `Входящие: ${list.length} ${plural(list.length, 'запись', 'записи', 'записей')}`;
+      return list.length ? `${head}\n${listText(list, verbose)}` : `${head} — пусто.`;
+    },
+  },
+  {
+    name: 'inbox_add',
+    description:
+      'Положить во «Входящие» то, что нашлось в почте, телеграме или вебе. Ни даты, ни приоритета: '
+      + 'разбирает человек. Повторный вызов с тем же source_ref обновляет запись, а не создаёт вторую.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'О чём запись — одной строкой.' },
+        summary: { type: 'string', description: 'Выжимка агента: контекст, о чём письмо, что предлагается. Попадает в заметки агента.' },
+        source_kind: {
+          type: 'string', enum: SOURCE_KINDS,
+          description: 'Откуда пришло. По умолчанию agent.',
+        },
+        source_url: { type: 'string', description: 'Ссылка на письмо, сообщение или страницу.' },
+        source_title: { type: 'string', description: 'Заголовок источника: тема письма, имя чата.' },
+        source_ref: {
+          type: 'string',
+          description: 'Устойчивый ключ источника для дедупликации: Message-ID письма, chat_id:message_id телеграма.',
+        },
+      },
+      required: ['title'],
+    },
+    async run({ title, summary, source_kind, source_url, source_title, source_ref }) {
+      const clean = String(title ?? '').trim();
+      if (!clean) throw new ToolError('Пустое название записи.');
+      const now = Date.now();
+      const note = String(summary ?? '').trim();
+
+      const all = await fetchTasks();
+      // Дедупликация по ref: агент разбирает одну и ту же папку не один раз,
+      // и без неё каждый проход плодил бы копии одного письма.
+      const ref = String(source_ref ?? '').trim();
+      const existing = ref
+        ? all.find((t) => t.source?.ref === ref && !t.done)
+        : null;
+
+      if (existing) {
+        existing.title = clean;
+        existing.source = {
+          ...existing.source,
+          kind: SOURCE_KINDS.includes(source_kind) ? source_kind : existing.source.kind,
+          url: source_url || existing.source.url,
+          title: source_title ?? existing.source.title,
+          ref,
+          at: now,
+        };
+        if (note) existing.agentNotes = [...existing.agentNotes, { at: now, text: note }];
+        await saveTask(existing);
+        return `Обновлено входящее:\n${taskLine(existing)}`;
+      }
+
+      // Ни due, ни priority: у входящего их не бывает по определению, и попасть
+      // сюда они не должны даже случайно — планирует человек.
+      const t = normalizeTask({
+        id: uid(),
+        title: clean,
+        source: {
+          kind: source_kind || 'agent',
+          url: source_url || null,
+          title: source_title || '',
+          ref: ref || null,
+          at: now,
+        },
+        agentNotes: note ? [{ at: now, text: note }] : [],
+        createdAt: now,
+        updatedAt: now,
+        order: now,
+      });
+      await pushTasks([t]);
+      return `Создано входящее:\n${taskLine(t)}`;
+    },
+  },
+  {
+    name: 'task_comment',
+    description:
+      'Дописать в заметки агента у задачи или входящего: что выяснилось, что поменялось. '
+      + 'Заметки человека (notes) не трогает.',
+    inputSchema: {
+      type: 'object',
+      properties: { task: taskArg, text: { type: 'string', description: 'Текст заметки.' } },
+      required: ['task', 'text'],
+    },
+    async run({ task, text }) {
+      const clean = String(text ?? '').trim();
+      if (!clean) throw new ToolError('Пустая заметка.');
+      const t = findTask(await fetchTasks(), task);
+      t.agentNotes = [...t.agentNotes, { at: Date.now(), text: clean }];
+      await saveTask(t);
+      return `Заметка добавлена к «${oneLine(t.title)}» (${shortId(t.id)}). Всего заметок агента: ${t.agentNotes.length}.`;
     },
   },
 ];

@@ -74,7 +74,7 @@ function onKeydown(e) {
   else if (e.key === '2') ctx.setView('tomorrow');
   else if (e.key === '3') ctx.setView('upcoming');
   else if (e.key === '4') ctx.setView('all');
-  else if (e.key === '5') ctx.setView('someday');
+  else if (e.key === '5') ctx.setView('inbox');
   else if (e.key === '6') ctx.setView('done');
   else if (e.key === 's') { e.preventDefault(); toggleSortMode(); }
 }

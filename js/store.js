@@ -97,6 +97,35 @@ export function load() {
   gcTombstones();
 }
 
+/**
+ * Задача это или входящее. Единственное место, где это решается.
+ *
+ * Тип не хранится, а выводится из даты: активная запись без даты — всегда
+ * неразобранное входящее. Поэтому «снял дату в редакторе» возвращает задачу
+ * во «Входящие» само, без отдельной ветки в каждом месте правки, а состояния
+ * «входящее с датой» не существует и затирать ничего не приходится.
+ *
+ * Выполненные — исключение: закрытая задача без даты остаётся в «Выполнено»,
+ * иначе разбор пришлось бы проходить заново по всему архиву.
+ */
+export function deriveKind(t) {
+  return t.done || t.due ? 'task' : 'inbox';
+}
+
+/** Допустимые источники входящего. Неизвестный считаем ручным. */
+const SOURCE_KINDS = ['gmail', 'telegram', 'web', 'calendar', 'agent', 'manual'];
+
+function normalizeSource(s) {
+  if (!s || typeof s !== 'object') return null;
+  return {
+    kind: SOURCE_KINDS.includes(s.kind) ? s.kind : 'manual',
+    url: s.url || null,
+    title: s.title || '',
+    ref: s.ref || null,
+    at: Number(s.at) || Date.now(),
+  };
+}
+
 /** Приводит задачу из хранилища к текущей форме — на случай старых записей. */
 export function normalizeTask(t) {
   return {
@@ -121,6 +150,16 @@ export function normalizeTask(t) {
     createdAt: t.createdAt || Date.now(),
     updatedAt: t.updatedAt || Date.now(),
     order: typeof t.order === 'number' ? t.order : Date.now(),
+    // Запись без kind, созданная до появления «Входящих», читается по тому же
+    // правилу, что и новая: с датой — задача, без даты и не выполнена — входящее.
+    kind: deriveKind(t),
+    source: normalizeSource(t.source),
+    // Лента агента. Живёт отдельно от notes: то, что пишет человек, агент не трогает.
+    agentNotes: Array.isArray(t.agentNotes)
+      ? t.agentNotes
+        .filter((n) => n && n.text)
+        .map((n) => ({ at: Number(n.at) || Date.now(), text: String(n.text) }))
+      : [],
   };
 }
 

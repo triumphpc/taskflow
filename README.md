@@ -16,20 +16,21 @@ same list follows you from your Mac to your iPhone.
 
 ## Features
 
-- **Views:** Today (overdue tasks included), Tomorrow, Upcoming (grouped by day), No date, All, Done.
+- **Views:** Today (overdue tasks included), Inbox, Tomorrow, Upcoming (grouped by day), All, Done.
+- **Inbox** — a flat list of unsorted stuff, with no date and no priority. Anything without a day lands here: a task created without a date, a task whose date was cleared, and whatever the agent drops in. You sort it out during the Moments pass, or right on the card — "Make it a task" or "Discard".
 - **Tasks:** title, notes, checkable subtasks.
 - **Clickable links:** a URL in a task title or in its notes stays where it was written and simply becomes clickable — in the list row, in the task card and on the day-planning card. It opens in a new tab; tapping it in the list neither opens the card nor starts a drag. Clicking the notes anywhere else starts editing, with the caret right where you tapped.
 - **Complete / reopen**, plus a "Clear completed" button with undo.
 - **Due date and time:** quick buttons — Today / Tomorrow / In 2 days / Next week — alongside plain date and time fields.
 - **Recurrence:** daily, weekly, or monthly, with an interval and a time of day. Marking a task done moves it to the next date in the series and resets its subtasks.
 - **Priorities:** P1 urgent and important, P2 important and not urgent, P3 urgent and not important, P4 neither.
-- **Drag and drop:** grab a task anywhere on its row. With a mouse, just drag; with a finger, press and hold until the row lifts (a short swipe still scrolls the list). The `⠿` handle on the right picks the row up immediately, without the hold. Dropping inside a group reorders it; dropping into another group reschedules the task — drop it on "Tomorrow" and it moves to tomorrow, drop it on "No date" and the due date is cleared. Keyboard works too: `Tab` to the handle, then `↑` / `↓`.
+- **Drag and drop:** grab a task anywhere on its row. With a mouse, just drag; with a finger, press and hold until the row lifts (a short swipe still scrolls the list). The `⠿` handle on the right picks the row up immediately, without the hold. Dropping inside a group reorders it; dropping into another group reschedules the task — drop it on "Tomorrow" and it moves to tomorrow, and to send a task back to the Inbox, just clear its date in the card. Keyboard works too: `Tab` to the handle, then `↑` / `↓`.
 - **List order:** automatic by default (by time, then by priority). The first drag pins a manual order; the `⇅` button in the header (or the `s` key) switches back.
-- **Moments** — a daily planning pass: the app walks through everything sitting on today (overdue, due today, and undated) and asks, for each task, a priority and a slot — today (morning / noon / afternoon / evening), tomorrow, in 2 days, next week, or no date. "Already done" and "Not relevant" are there too.
+- **Moments** — a daily planning pass: the app walks one queue — unsorted inbox items first, then tasks (overdue and due today) — and asks, for each card, a priority and a slot: today (morning / noon / afternoon / evening), tomorrow, in 2 days, next week. Answering "when" turns an inbox item into a task; the last button leaves an inbox item unsorted and sends a task back to the Inbox. "Already done" and "Not relevant" are there too.
 - **Local reminders** — while the tab or the installed app is open.
 - **Theme** — light, dark, or follow the system.
 - **Cross-device sync** — tasks live on your own server, so your Mac, your iPhone, and any browser all see one list. It works offline: edits pile up locally and are pushed once the network is back.
-- **Agent access** — an optional MCP server exposes the same nine task operations to Claude Code and other MCP clients, behind its own token, separate from sync.
+- **Agent access** — an optional MCP server exposes the same task operations, plus the Inbox, to Claude Code and other MCP clients, behind its own token, separate from sync.
 - **Your data stays yours** — your own server plus a local copy in the browser. JSON export and import for backups.
 
 Quick entry understands inline hints: `Купить молоко завтра 18:30 !1` creates a
@@ -37,7 +38,7 @@ task for tomorrow at 18:30 with priority P1. The recognised date words are
 Russian — `сегодня` (today), `завтра` (tomorrow), `послезавтра` (the day after) —
 alongside an `HH:MM` time and `!1`…`!4`, which work regardless of language.
 
-Keyboard shortcuts: `n` new task, `m` Moments, `s` list order, `,` settings, `1`…`6` views.
+Keyboard shortcuts: `n` new task, `m` Moments, `s` list order, `,` settings, `1`…`6` views (`1` Today, `5` Inbox).
 
 ---
 
@@ -115,7 +116,7 @@ A second process, `mcp.mjs`, can run alongside the main server. It speaks the
 
 | Tool | What it does |
 |---|---|
-| `tasks_list` | tasks in a view: `today`, `tomorrow`, `upcoming`, `someday`, `all`, `done`, `overdue` |
+| `tasks_list` | tasks in a view: `today`, `tomorrow`, `upcoming`, `all`, `done`, `overdue` |
 | `task_get` | one task in full: notes, subtasks, recurrence |
 | `task_add` | create a task in a single call: due date, priority, notes, subtasks, recurrence |
 | `task_edit` | change fields; `clear_due` drops the due date along with the recurrence |
@@ -124,11 +125,29 @@ A second process, `mcp.mjs`, can run alongside the main server. It speaks the
 | `subtask_add` | add a subtask |
 | `subtask_toggle` | toggle a subtask |
 | `task_delete` | delete a task — only with `confirm: true` |
+| `inbox_list` | unsorted inbox items: source, agent summary, timestamp |
+| `inbox_add` | drop an inbox item: `title`, `summary`, `source_kind`, `source_url`, `source_title`, `source_ref` |
+| `task_comment` | append context to the `agentNotes` feed of a task or an inbox item |
 
 Tasks can be named in words: `task: "milk"` finds it by title. If several match,
 the tool returns the candidates and **changes nothing**. Due dates are words too:
 `today`, `tomorrow`, `monday`, `next-week`, `+3`, `2026-09-15`, `tomorrow 18:30`
 (the Russian equivalents work as well).
+
+### What the agent may do with the Inbox
+
+The agent fills the Inbox **only when asked, or by explicitly agreed sorting
+rules** — never on its own initiative.
+
+What goes in is raw material: a title, a summary and a link to the source —
+**with no date and no priority**. Planning is the human's job, done while sorting.
+`inbox_add` takes neither a date nor a priority at all, and `task_add` without a
+date creates an inbox item rather than a task.
+
+Calling `inbox_add` again with the same `source_ref` (a `Message-ID` for mail,
+`chat_id:message_id` for Telegram) updates the existing record instead of adding
+a second one. The agent's summary goes into the `agentNotes` feed — the `notes`
+field, which the human writes, is never touched, here or in `task_comment`.
 
 Running it:
 

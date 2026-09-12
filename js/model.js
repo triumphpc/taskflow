@@ -1,6 +1,6 @@
 // Операции над задачами: создание, правка, завершение, повторы, выборки для разделов.
 
-import { state, commit, normalizeTask, tombstone } from './store.js';
+import { state, commit, normalizeTask, tombstone, deriveKind } from './store.js';
 import {
   uid, todayStr, addDaysStr, nextMondayStr, datePart, timePart, combineDue,
   isAllDay, parseDue, isOverdue, fromDateStr, toDateStr, nextOccurrence,
@@ -28,7 +28,9 @@ export function repeatLabel(repeat) {
   return `Каждые ${n} ${unit}`;
 }
 
-const touch = (t) => { t.updatedAt = Date.now(); };
+// Тип пересчитываем на каждой правке — иначе «убрал дату» оставило бы запись
+// задачей без даты, то есть в разделе, которого больше нет.
+const touch = (t) => { t.updatedAt = Date.now(); t.kind = deriveKind(t); };
 
 // ---------- CRUD ----------
 
@@ -186,9 +188,9 @@ const ORDER_STEP = 1000;
 
 export const VIEWS = {
   today: { id: 'today', title: 'Сегодня', icon: '☀︎' },
+  inbox: { id: 'inbox', title: 'Входящие', icon: '✉' },
   tomorrow: { id: 'tomorrow', title: 'Завтра', icon: '→' },
   upcoming: { id: 'upcoming', title: 'Ближайшие', icon: '▤' },
-  someday: { id: 'someday', title: 'Без даты', icon: '◇' },
   all: { id: 'all', title: 'Все задачи', icon: '≡' },
   done: { id: 'done', title: 'Выполнено', icon: '✓' },
 };
@@ -226,7 +228,26 @@ export const isManualSort = () => state.settings.sortMode === 'manual';
 const sortGroup = (list, cmp) =>
   list.sort(isManualSort() ? (a, b) => byOrder(a, b) || cmp(a, b) : cmp);
 
-const active = () => state.tasks.filter((t) => !t.done);
+// Активные задачи — без выполненных и без неразобранных входящих. Входящее
+// не задача: пока ему не назначили день, в разделах задач ему делать нечего.
+const active = () => state.tasks.filter((t) => !t.done && t.kind !== 'inbox');
+
+/** Неразобранные входящие: от свежего к старому по времени источника. */
+export function inboxItems() {
+  return state.tasks
+    .filter((t) => !t.done && t.kind === 'inbox')
+    .sort((a, b) => (b.source?.at || b.createdAt || 0) - (a.source?.at || a.createdAt || 0));
+}
+
+/**
+ * Превращает входящее в задачу: назначает день, всё остальное — source,
+ * agentNotes, приоритет — остаётся при записи.
+ */
+export function inboxToTask(id, dateStr = todayStr()) {
+  const t = getTask(id);
+  if (!t || t.kind !== 'inbox') return null;
+  return scheduleTask(id, dateStr);
+}
 
 /**
  * Задачи раздела, сгруппированные для отрисовки.
@@ -266,28 +287,20 @@ export function groupsForView(viewId) {
     }));
   }
 
-  if (viewId === 'someday') {
-    const list = sortGroup(active().filter((t) => !t.due), byPriorityThenTime);
-    return [{ key: 'someday', title: 'Без даты', tasks: list, dropDue: null }];
-  }
-
   if (viewId === 'all') {
     const buckets = [
       { key: 'overdue', title: 'Просрочено', tone: 'overdue', tasks: [] },
       { key: 'today', title: 'Сегодня', tasks: [], dropDue: today },
       { key: 'tomorrow', title: 'Завтра', tasks: [], dropDue: tomorrow },
       { key: 'later', title: 'Позже', tasks: [] },
-      { key: 'someday', title: 'Без даты', tasks: [], dropDue: null },
     ];
     const idx = Object.fromEntries(buckets.map((b, i) => [b.key, i]));
     for (const t of active()) {
       const d = datePart(t.due);
-      const key = !d ? 'someday' : d < today ? 'overdue' : d === today ? 'today' : d === tomorrow ? 'tomorrow' : 'later';
+      const key = d < today ? 'overdue' : d === today ? 'today' : d === tomorrow ? 'tomorrow' : 'later';
       buckets[idx[key]].tasks.push(t);
     }
-    for (const b of buckets) {
-      sortGroup(b.tasks, b.key === 'someday' ? byPriorityThenTime : byTimeThenPriority);
-    }
+    for (const b of buckets) sortGroup(b.tasks, byTimeThenPriority);
     return buckets.filter((b) => b.tasks.length);
   }
 
@@ -303,8 +316,10 @@ export function groupsForView(viewId) {
 // ---------- Перетаскивание ----------
 
 /**
- * Переносит задачу в другую группу списка: у групп с датой это просто смена даты
- * (время дня сохраняется), у «Без даты» — снятие даты вместе с повтором.
+ * Переносит задачу в другую группу списка: это просто смена даты, время дня
+ * сохраняется. Ветка `dropDue === null` (снять дату вместе с повтором) сейчас
+ * недостижима — групп без даты не осталось, задача возвращается во «Входящие»
+ * снятием даты в редакторе; оставлена как общая логика переноса.
  * `dropDue`: 'YYYY-MM-DD' | null. Возвращает задачу либо null, если ничего не изменилось.
  */
 export function moveToGroupDate(id, dropDue) {
@@ -364,27 +379,28 @@ export function counts() {
     today: a.filter((t) => t.due && datePart(t.due) <= today).length,
     tomorrow: a.filter((t) => t.due && datePart(t.due) === tomorrow).length,
     upcoming: a.filter((t) => t.due && datePart(t.due) > today).length,
-    someday: a.filter((t) => !t.due).length,
+    inbox: inboxItems().length,
     all: a.length,
-    done: state.tasks.length - a.length,
+    done: state.tasks.filter((t) => t.done).length,
   };
 }
 
 /**
- * Кандидаты для Moments: всё, что «висит» на сегодня —
- * просроченное, назначенное на сегодня и вовсе без даты.
+ * Одна очередь планирования: сначала неразобранные входящие, затем то, что
+ * «висит» на сегодня — просроченное и назначенное на сегодня. Разбор входящих
+ * не отдельный обряд, а начало того же прохода: сперва решаем, что вообще
+ * берём в работу, потом раскладываем по времени.
+ *
+ * Ветки «задачи без даты» здесь больше нет: активная запись без даты — это
+ * входящее, и она уже в начале очереди.
  */
 export function momentsCandidates() {
   const today = todayStr();
-  const rank = (t) => {
-    const d = datePart(t.due);
-    if (d && d < today) return 0;
-    if (!d) return 1;
-    return 2;
-  };
-  return active()
-    .filter((t) => !t.due || datePart(t.due) <= today)
+  const rank = (t) => (datePart(t.due) < today ? 0 : 1);
+  const tasks = active()
+    .filter((t) => datePart(t.due) <= today)
     .sort((a, b) => rank(a) - rank(b) || a.priority - b.priority || (a.order || 0) - (b.order || 0));
+  return [...inboxItems(), ...tasks];
 }
 
 /** Задачи со временем, для которых пора показать напоминание. */
