@@ -6,7 +6,7 @@ import { $, debounce } from './dom.js';
 import { state, load, subscribe } from './store.js';
 import * as M from './model.js';
 import * as S from './sync.js';
-import { ctx, render, applyTheme, openEditor, openSettings, focusComposer, toggleSortMode, syncDevicesNow } from './ui.js';
+import { ctx, render, applyTheme, openEditor, openSettings, openComposer, toggleSortMode, syncDevicesNow } from './ui.js';
 import { openMoments } from './moments.js';
 
 const VALID_VIEWS = Object.keys(M.VIEWS);
@@ -67,7 +67,7 @@ function onKeydown(e) {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
 
-  if (e.key === 'n') { e.preventDefault(); if (!focusComposer()) { ctx.setView('today'); ctx.refresh(); focusComposer(); } }
+  if (e.key === 'n') { e.preventDefault(); openComposer(); }
   else if (e.key === 'm') { e.preventDefault(); openMoments(); }
   else if (e.key === ',') { e.preventDefault(); openSettings(); }
   else if (e.key === '1') ctx.setView('today');
@@ -108,17 +108,10 @@ function init() {
   $('#btn-settings').addEventListener('click', openSettings);
   $('#btn-sort').addEventListener('click', toggleSortMode);
   $('#btn-cloud').addEventListener('click', syncDevicesNow);
-  $('#btn-fab').addEventListener('click', () => {
-    // Фокус только синхронно, внутри самого жеста: iOS поднимает клавиатуру
-    // лишь в этом случае, а из setTimeout молча ничего не делает.
-    if (focusComposer()) return;
-    // На «Выполнено» поля ввода нет. Смена раздела перерисовывает
-    // список через hashchange, то есть позже, — рисуем сразу, чтобы успеть
-    // навести фокус тем же жестом.
-    ctx.setView('today');
-    ctx.refresh();
-    focusComposer();
-  });
+  // Окно открывается поверх любого раздела, включая «Выполнено», — переключать
+  // ничего не нужно. Фокус ставится внутри openComposer синхронно, в этом же
+  // жесте: иначе iOS не поднимет клавиатуру.
+  $('#btn-fab').addEventListener('click', openComposer);
 
   document.addEventListener('keydown', onKeydown);
 

@@ -33,6 +33,13 @@ same list follows you from your Mac to your iPhone.
 - **Agent access** — an optional MCP server exposes the same task operations, plus the Inbox, to Claude Code and other MCP clients, behind its own token, separate from sync.
 - **Your data stays yours** — your own server plus a local copy in the browser. JSON export and import for backups.
 
+**Adding a task.** There is no input field above the list — the main page is the
+list itself. A new task is created with the "+" button in the bottom-right corner
+or with the `n` key; both open the same quick-entry window. The window stays open
+after Enter: the field clears, the caret stays in it, and you can enter a run of
+tasks one after another. The default date comes from the section the window was
+opened from (Inbox and Done give no date, so the task lands in the Inbox).
+
 Quick entry understands inline hints: `Купить молоко завтра 18:30 !1` creates a
 task for tomorrow at 18:30 with priority P1. The recognised date words are
 Russian — `сегодня` (today), `завтра` (tomorrow), `послезавтра` (the day after) —

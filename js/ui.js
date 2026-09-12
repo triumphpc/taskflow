@@ -521,6 +521,8 @@ function composer() {
     const task = M.createTask(parsed);
     input.value = '';
     autoGrow(input);
+    // Окно остаётся открытым: следующая задача вводится сразу, без нового жеста.
+    input.focus();
     toast('Задача добавлена', { actionLabel: 'Открыть', action: () => openEditor(task.id) });
   };
 
@@ -535,14 +537,22 @@ function composer() {
     h('span', { class: 'composer-hint' }, 'Enter — добавить, ⇧Enter — перенос'));
 }
 
-export function focusComposer() {
-  const input = $('.composer textarea');
-  if (!input) return false;
-  // Поле ввода живёт внутри прокручиваемого списка: если экран промотан вниз,
-  // один только фокус выглядит как «ничего не произошло».
-  input.scrollIntoView({ block: 'nearest' });
-  input.focus();
-  return true;
+/**
+ * Окно добавления задачи. Единственный вход в ввод: строки над списком больше нет.
+ *
+ * Окно не закрывается после Enter — поле очищается, тост подтверждает, что задача
+ * ушла в список. Иначе привычка «закинуть три дела подряд» стоила бы трёх нажатий
+ * на «+». Закрывают его Esc, крестик или клик мимо, как любое другое окно.
+ */
+export function openComposer() {
+  const form = composer();
+  const ui = openSheet({ title: 'Новая задача', bodyNodes: form });
+  ui.sheet.classList.add('sheet-composer');
+  // Фокус — синхронно, прямо в обработчике жеста. Из setTimeout или после
+  // анимации iOS клавиатуру молча не поднимет, и добавление с телефона
+  // превратится в двойное касание.
+  form.querySelector('textarea').focus();
+  return ui;
 }
 
 // ---------- Входящее ----------
@@ -630,11 +640,11 @@ function inboxCard(task) {
 
 function emptyState(view) {
   const texts = {
-    today: ['☀︎', 'На сегодня всё чисто', 'Добавьте задачу выше или запустите Moments — он разложит по времени всё, что висит.'],
+    today: ['☀︎', 'На сегодня всё чисто', 'Добавьте задачу кнопкой «+» или запустите Moments — он разложит по времени всё, что висит.'],
     tomorrow: ['→', 'На завтра пусто', 'Хорошая возможность заранее разгрузить сегодня.'],
     upcoming: ['▤', 'Впереди свободно', 'Задачи с датой появятся здесь, сгруппированные по дням.'],
     inbox: ['✉', 'Разбирать нечего', 'Сюда попадает всё, чему ещё не назначен день, — и то, что приносит агент.'],
-    all: ['≡', 'Задач нет', 'Начните с первой — поле ввода сверху.'],
+    all: ['≡', 'Задач нет', 'Начните с первой — кнопка «+» в правом нижнем углу.'],
     done: ['✓', 'Выполненного пока нет', 'Отмечайте задачи — они соберутся здесь.'],
   };
   const [icon, title, hint] = texts[view] || ['◇', 'Пусто', ''];
@@ -645,7 +655,6 @@ function emptyState(view) {
 }
 
 function renderListView(root, view) {
-  if (view !== 'done') root.append(composer());
 
   if (view === 'inbox') {
     const items = M.inboxItems();
