@@ -1,18 +1,11 @@
 // Moments — планирование дня. Проводит по задачам, которые «висят» на сегодня,
 // и для каждой спрашивает: когда делать и какой приоритет.
 
-import { fmtDue, fmtDayLabel, fmtDateShort, timePart, combineDue, plural } from './core.js';
+import { fmtDue, plural } from './core.js';
 import { h, clear, linkify } from './dom.js';
-import { state } from './store.js';
 import * as M from './model.js';
+import { schedulePicker } from './scheduler.js';
 import { openSheet, toast, ctx, openEditor, sourceLine, agentFeed } from './ui.js';
-
-const DAY_PARTS = [
-  ['morning', 'Утро'],
-  ['noon', 'Обед'],
-  ['afternoon', 'День'],
-  ['evening', 'Вечер'],
-];
 
 /** Заметку в карточке показываем куском. Режем по границе слова: адрес пробелов
  *  внутри не содержит, поэтому так ссылка на срезе не превратится в битую. */
@@ -60,14 +53,6 @@ export function openMoments() {
 
   const next = () => { index++; step(); };
 
-  function applyAndNext(patch, message) {
-    const task = queue[index];
-    M.updateTask(task.id, patch);
-    stats.planned++;
-    if (message) toast(message, { ms: 2200 });
-    next();
-  }
-
   function step() {
     clear(body);
     progress.style.width = `${Math.round((index / queue.length) * 100)}%`;
@@ -92,65 +77,27 @@ export function openMoments() {
         task.subtasks.length ? ` · ${task.subtasks.length} ${plural(task.subtasks.length, 'подзадача', 'подзадачи', 'подзадач')}` : '',
         task.repeat ? ` · ${M.repeatLabel(task.repeat)}` : ''));
 
-    // --- Приоритет
-    const prioChips = h('div', { class: 'chips' });
-    const drawPrio = () => {
-      clear(prioChips);
-      for (const p of Object.values(M.PRIORITIES)) {
-        prioChips.append(h('button', {
-          class: `chip${task.priority === p.id ? ' active' : ''}`,
-          title: p.name,
-          onclick: () => { M.updateTask(task.id, { priority: p.id }); drawPrio(); },
-        }, `${p.code} · ${p.name}`));
-      }
-    };
-    drawPrio();
-
-    // --- Когда
-    const whenWrap = h('div', { class: 'when-grid' });
-    const dayPartsWrap = h('div', { class: 'daypart-grid hidden' });
-
-    const todayBtn = h('button', {
-      class: 'when-btn',
-      style: { width: '100%' },
-      'aria-expanded': 'false',
-      onclick: () => {
-        const shown = dayPartsWrap.classList.toggle('hidden');
-        todayBtn.setAttribute('aria-expanded', shown ? 'false' : 'true');
+    // --- Приоритет и срок
+    // Тот же компонент, что в окне добавления и в карточке: раньше здесь жила
+    // третья по счёту копия этих кнопок, и она успела разойтись с остальными.
+    const picker = schedulePicker({
+      value: { priority: task.priority, due: task.due, dateAnswered: !isInbox },
+      onChange: (v) => {
+        const patch = {};
+        if (v.priority !== null) patch.priority = v.priority;
+        if (v.dateAnswered) patch.due = v.due;
+        if (v.dateAnswered && !v.due) patch.repeat = null;
+        M.updateTask(task.id, patch);
       },
-    }, 'Сегодня', h('small', null, 'выбрать время дня ▾'));
-
-    for (const [key, label] of DAY_PARTS) {
-      const time = state.settings.dayParts[key];
-      dayPartsWrap.append(h('button', {
-        class: 'when-btn',
-        onclick: () => applyAndNext({ due: combineDue(M.QUICK_DATES.today(), time) }, `${label}, ${time}`),
-      }, label, h('small', null, time)));
-    }
-
-    const mk = (label, dateFn, sub) => h('button', {
-      class: 'when-btn',
-      onclick: () => {
-        const date = dateFn();
-        applyAndNext({ due: combineDue(date, timePart(task.due)) }, fmtDayLabel(date));
+      // Ответ на последний шаг листает очередь дальше — ради этого темпа Moments
+      // и существует.
+      onDone: () => {
+        stats.planned++;
+        const t = M.getTask(task.id);
+        toast(t?.due ? fmtDue(t.due) : 'Осталось во «Входящих»', { ms: 2000 });
+        next();
       },
-    }, label, sub ? h('small', null, sub) : null);
-
-    whenWrap.append(
-      mk('Завтра', M.QUICK_DATES.tomorrow, fmtDateShort(M.QUICK_DATES.tomorrow())),
-      mk('Через 2 дня', M.QUICK_DATES.in2days, fmtDateShort(M.QUICK_DATES.in2days())),
-      mk('На следующей неделе', M.QUICK_DATES.nextWeek, fmtDateShort(M.QUICK_DATES.nextWeek())),
-      isInbox
-        ? h('button', {
-          class: 'when-btn',
-          // Ответа нет — значит и правки нет: запись без даты остаётся входящей
-          // и вернётся в очередь следующего прохода.
-          onclick: () => { stats.skipped++; next(); },
-        }, 'Пока не разбираю', h('small', null, 'останется во «Входящих»'))
-        : h('button', {
-          class: 'when-btn',
-          onclick: () => applyAndNext({ due: null, repeat: null }, 'Вернулось во «Входящие»'),
-        }, 'Во входящие', h('small', null, 'снять дату, разобрать позже')));
+    });
 
     // --- Прочие действия
     const actions = h('div', { class: 'chips', style: { marginTop: '14px' } },
@@ -164,21 +111,18 @@ export function openMoments() {
         },
       }, '✓ Уже сделано'),
       h('button', { class: 'chip', onclick: () => { sheetRef.close(); openEditor(task.id); } }, '✎ Открыть задачу'),
+      isInbox
+        // Ответа нет — значит и правки нет: запись без даты остаётся входящей
+        // и вернётся в очередь следующего прохода.
+        ? h('button', { class: 'chip', onclick: () => { stats.skipped++; next(); } }, '↷ Пока не разбираю')
+        : null,
       h('button', {
         class: 'chip',
         style: { color: 'var(--danger)' },
         onclick: () => { M.deleteTask(task.id); stats.deleted++; toast('Удалено', { ms: 2000 }); next(); },
       }, '✕ Не актуально'));
 
-    body.append(
-      card,
-      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Приоритет'), prioChips),
-      h('div', { class: 'field' },
-        h('span', { class: 'field-label' }, 'Когда делать'),
-        todayBtn, dayPartsWrap,
-        h('div', { style: { height: '7px' } }),
-        whenWrap),
-      actions);
+    body.append(card, picker.node, actions);
   }
 
   function finish() {

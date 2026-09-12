@@ -216,21 +216,15 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 /* Живёт внутри окна добавления: своей рамки и тени не нужно — они бы читались
    как рамка в рамке. */
-.composer { display: flex; align-items: center; gap: 10px; }
-.composer textarea {
-  flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: 15px;
+.composer-input {
+  width: 100%; border: 0; background: transparent; outline: none;
   /* textarea ради переводов строк; вид должен остаться как у обычного поля */
-  font: inherit; font-size: 15px; line-height: 1.4; resize: none; overflow: hidden;
-  padding: 0; max-height: 40vh;
+  font: inherit; font-size: 17px; font-weight: 560; line-height: 1.35;
+  resize: none; overflow: hidden; padding: 0; max-height: 40vh;
 }
-.composer textarea::placeholder { color: var(--text-faint); }
-.composer .plus {
-  width: 22px; height: 22px; border-radius: 50%; flex: none; align-self: flex-start; margin-top: 1px;
-  display: grid; place-items: center; font-size: 16px; line-height: 1;
-  background: var(--accent); color: #fff; border: 0;
-}
-.composer-hint { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; align-self: flex-start; margin-top: 2px; }
-@media (max-width: 620px) { .composer-hint { display: none; } }
+.composer-input::placeholder { color: var(--text-faint); font-weight: 450; }
+.composer-hint { font-size: 12px; color: var(--text-faint); }
+@media (max-width: 480px) { .composer-hint { display: none; } }
 
 /* ---------- Список задач ---------- */
 
@@ -476,6 +470,9 @@ body.is-dragging .task-open { pointer-events: none; }
    открылось именно нажатое. Остальные окна поднимаются как раньше — это
    отдельный класс, а не правка общей `rise`. */
 .sheet.sheet-composer {
+  /* Шире прочих окон: ряд приоритетов и ряд быстрых дат должны помещаться
+     каждый в одну строку, иначе шаг перестаёт читаться как один вопрос. */
+  width: min(660px, 100%);
   transform-origin: bottom right;
   animation: pop-corner .18s cubic-bezier(.2, .8, .3, 1);
 }
@@ -497,7 +494,7 @@ body.is-dragging .task-open { pointer-events: none; }
 
 @media (max-width: 640px) {
   .overlay { padding: 0; align-items: flex-end; }
-  .sheet {
+  .sheet, .sheet.sheet-composer {
     width: 100%; max-height: 92vh;
     border-radius: 18px 18px 0 0; border-bottom: 0;
   }
@@ -540,17 +537,100 @@ body.is-dragging .task-open { pointer-events: none; }
 }
 .chip.chip-clear { color: var(--text-faint); }
 
-.prio-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.prio-btn {
-  display: flex; align-items: center; gap: 8px; text-align: left;
-  padding: 9px 11px; border-radius: 10px;
-  border: 1px solid var(--line); background: var(--bg); color: var(--text-dim);
+/* ---------- Пошаговый выбор приоритета и срока ---------- */
+
+.sched { display: flex; flex-direction: column; gap: 13px; }
+.sched-step { display: flex; flex-direction: column; gap: 7px; animation: step-in .16s ease-out; }
+@keyframes step-in { from { opacity: 0; transform: translateY(-4px); } }
+.sched-label {
+  font-size: 11.5px; font-weight: 650; letter-spacing: .5px;
+  text-transform: uppercase; color: var(--text-faint);
 }
-.prio-btn .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; }
-.prio-btn .lbl { font-weight: 660; font-size: 13px; color: var(--c); }
-.prio-btn .sub { font-size: 11.5px; color: var(--text-faint); }
-.prio-btn[aria-pressed="true"] { border-color: var(--c); background: color-mix(in srgb, var(--c) 11%, transparent); }
-.prio-btn > div { min-width: 0; }
+.sched-row { display: flex; flex-wrap: wrap; gap: 7px; }
+
+/* Круглые и крупные: в них целятся пальцем, а ряд из пяти кнопок должен
+   читаться как один вопрос, а не как панель инструментов. */
+.sched-btn {
+  min-height: 42px; padding: 6px 15px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  font-size: 14px; font-weight: 560; line-height: 1.15; white-space: nowrap;
+}
+.sched-btn small { font-weight: 450; font-size: 11.5px; color: var(--text-faint); }
+.sched-btn:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.sched-btn:hover small { color: inherit; opacity: .75; }
+.sched-btn.on {
+  border-color: var(--accent); background: var(--accent-soft);
+  color: var(--accent); font-weight: 640;
+}
+.sched-btn.on small { color: inherit; opacity: .8; }
+.sched-btn.ghost { color: var(--text-faint); }
+.sched-btn.icon { font-size: 17px; padding: 6px 14px; }
+
+.sched-btn.prio { padding-left: 13px; }
+.sched-btn.prio .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+.sched-btn.prio:hover { border-color: var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); color: var(--c); }
+.sched-btn.prio.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 13%, transparent); color: var(--c); }
+
+/* Шаг, на который не ответили, мигает при попытке добавить задачу раньше времени. */
+.sched-step.nudge { animation: nudge .3s ease-out; }
+@keyframes nudge {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+/* ---------- Календарь месяца ---------- */
+
+.cal { border: 1px solid var(--line-soft); border-radius: 13px; padding: 9px; }
+.cal-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.cal-title { font-size: 14px; font-weight: 640; flex: 1; text-align: center; }
+.cal-nav {
+  width: 34px; height: 34px; border-radius: 9px; flex: none;
+  font-size: 18px; line-height: 1; color: var(--text-dim);
+  border: 1px solid var(--line); background: var(--bg);
+}
+.cal-nav:hover { border-color: var(--accent); color: var(--accent); }
+.cal-back {
+  padding: 6px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 560;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text-faint);
+}
+.cal-back:hover { border-color: var(--text-faint); color: var(--text); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cal-wd {
+  text-align: center; font-size: 11px; font-weight: 620; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--text-faint); padding-bottom: 3px;
+}
+.cal-day {
+  min-height: 40px; border-radius: 10px; border: 1px solid transparent;
+  background: transparent; color: var(--text); font-size: 14px; font-weight: 520;
+}
+.cal-day:hover { background: var(--accent-soft); color: var(--accent); }
+.cal-day.out { color: var(--text-faint); font-weight: 430; }
+.cal-day.today { border-color: var(--line); font-weight: 700; }
+.cal-day.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 660; }
+
+/* ---------- Свёрнутые значения в карточке задачи ---------- */
+
+.sched-rows { display: flex; flex-direction: column; gap: 7px; }
+.sched-rows .sched { padding: 3px 2px 6px; }
+.sched-value-btn {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  min-height: 44px; padding: 8px 13px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+.sched-value-btn:hover { border-color: var(--text-faint); }
+.sched-value.open .sched-value-btn { border-color: var(--accent); color: var(--accent); }
+.sched-value-btn .k {
+  font-size: 11.5px; font-weight: 650; letter-spacing: .5px;
+  text-transform: uppercase; color: var(--text-faint); flex: none;
+}
+.sched-value-btn .v { font-size: 14px; font-weight: 560; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sched-value-btn .ed { color: var(--text-faint); font-size: 14px; flex: none; }
+
+/* Шапка окна разбора входящего: откуда пришло и что именно разбираем. */
+.sort-head { margin-bottom: 15px; }
+.sort-head .inbox-title { font-size: 17px; font-weight: 600; margin-top: 4px; }
 
 .subtasks { display: flex; flex-direction: column; gap: 2px; }
 .subtask { display: flex; align-items: center; gap: 9px; padding: 4px 0; }
@@ -603,16 +683,6 @@ body.is-dragging .task-open { pointer-events: none; }
 }
 .moments-task .notes { font-size: 13px; color: var(--text-dim); margin-top: 6px; white-space: pre-wrap; }
 .moments-task .cur { font-size: 12px; color: var(--text-faint); margin-top: 7px; }
-.when-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.when-btn {
-  padding: 12px; border-radius: 11px; text-align: left;
-  border: 1px solid var(--line); background: var(--bg); color: var(--text);
-  font-weight: 560; font-size: 14px;
-}
-.when-btn:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.when-btn small { display: block; font-weight: 450; font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
-.when-btn:hover small { color: inherit; opacity: .8; }
-.daypart-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-top: 7px; }
 
 /* ---------- Настройки ---------- */
 
@@ -705,8 +775,12 @@ body.is-dragging .task-open { pointer-events: none; }
   /* Над таббаром, поэтому fixed и относительно окна, а не области списка. */
   .fab { position: fixed; left: auto; right: 16px; bottom: calc(74px + var(--safe-b)); }
   .toast-root { bottom: calc(152px + var(--safe-b)); }
-  .prio-grid { grid-template-columns: 1fr; }
-  .when-grid { grid-template-columns: 1fr; }
+  /* Кнопки не сжимаем — их переносит на вторую строку: попасть пальцем важнее,
+     чем уложить ряд в одну линию. */
+  .sched-btn { min-height: 44px; font-size: 15px; padding: 6px 16px; }
+  .cal-day { min-height: 42px; font-size: 15px; }
+  .sched-value-btn { min-height: 48px; }
+  .sched-value-btn .v { font-size: 15px; }
 
   /* Пальцем целиться труднее, чем курсором, и держат телефон дальше от глаз,
      чем смотрят в монитор. На узких экранах увеличиваем и текст, и иконки,
@@ -717,11 +791,9 @@ body.is-dragging .task-open { pointer-events: none; }
   .topbar-title p { font-size: 13.5px; }
   .icon-btn { width: 40px; height: 40px; font-size: 19px; }
 
-  .composer { padding: 13px 14px; }
   /* Ровно 17px, а не 15: Safari на iOS увеличивает всю страницу при фокусе
      на поле мельче 16px — экран дёргался при каждом добавлении задачи. */
-  .composer textarea { font-size: 17px; }
-  .composer .plus { width: 27px; height: 27px; font-size: 20px; }
+  .composer-input { font-size: 17px; }
 
   .task { padding: 14px 13px 14px 0; gap: 13px; }
   .task-title { font-size: 16.5px; }

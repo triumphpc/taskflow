@@ -36,14 +36,30 @@ same list follows you from your Mac to your iPhone.
 **Adding a task.** There is no input field above the list — the main page is the
 list itself. A new task is created with the "+" button in the bottom-right corner
 or with the `n` key; both open the same quick-entry window. The window stays open
-after Enter: the field clears, the caret stays in it, and you can enter a run of
-tasks one after another. The default date comes from the section the window was
-opened from (Inbox and Done give no date, so the task lands in the Inbox).
+after Enter: the field clears, the steps reset, the caret stays in the field, and
+you can enter a run of tasks one after another.
+
+Priority and due date are asked one step at a time: P1–P4 first, then the day —
+today, tomorrow, in 2 days, next week, a calendar, or "no date" — and only once a
+day is picked does the "what time" step appear: morning, noon, afternoon, evening,
+or no time. Day-part times come from the settings. "Add" and Enter wait for the
+first two answers; the section the window was opened from does not supply a date,
+so a task with no day picked lands in the Inbox.
 
 Quick entry understands inline hints: `Купить молоко завтра 18:30 !1` creates a
 task for tomorrow at 18:30 with priority P1. The recognised date words are
 Russian — `сегодня` (today), `завтра` (tomorrow), `послезавтра` (the day after) —
-alongside an `HH:MM` time and `!1`…`!4`, which work regardless of language.
+alongside an `HH:MM` time and `!1`…`!4`, which work regardless of language. What
+the text specifies is marked in the steps right away, so such a line is added with
+a single Enter; pressing a button afterwards overrides what was parsed.
+
+**The same picker everywhere.** A task card shows priority and due date as collapsed
+rows with the current value; editing expands the same steps underneath, and the
+answer applies immediately. There are no separate date and time inputs on the card —
+the calendar and the day parts do that job. "To task" on an inbox item opens a
+sorting window with the same steps and decides nothing for you: until you answer
+the "when" step, the record stays in the Inbox. Moments asks the same questions and
+moves to the next card once the last step is answered.
 
 Keyboard shortcuts: `n` new task, `m` Moments, `s` list order, `,` settings, `1`…`6` views (`1` Today, `5` Inbox).
 

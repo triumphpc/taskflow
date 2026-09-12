@@ -243,10 +243,13 @@ export function inboxItems() {
  * Превращает входящее в задачу: назначает день, всё остальное — source,
  * agentNotes, приоритет — остаётся при записи.
  */
-export function inboxToTask(id, dateStr = todayStr()) {
+export function inboxToTask(id, dateStr, time = null) {
   const t = getTask(id);
   if (!t || t.kind !== 'inbox') return null;
-  return scheduleTask(id, dateStr);
+  // Умолчания нет намеренно: раньше здесь стоял todayStr(), и «Сегодня» набивался
+  // записями, которые пользователь всего лишь открыл на разбор.
+  if (!dateStr) return null;
+  return scheduleTask(id, dateStr, time);
 }
 
 /**

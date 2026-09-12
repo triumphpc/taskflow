@@ -3,6 +3,7 @@
 import { todayStr, addDaysStr, toDateStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
   combineDue, plural, oneLine } from './core.js';
 import { $, h, clear, append, debounce, linkify, caretIndexAt } from './dom.js';
+import { schedulePicker } from './scheduler.js';
 import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
 import * as S from './sync.js';
 import * as M from './model.js';
@@ -455,14 +456,20 @@ function restoreHandleFocus() {
   restoreHandleFocus.timer = setTimeout(() => { focusHandle = null; }, 400);
 }
 
-// ---------- Поле быстрого добавления ----------
+// ---------- Окно быстрого добавления ----------
 
-/** Разбирает «Купить молоко завтра 18:30 !1» -> {title, due, priority}. */
-export function parseQuickInput(raw, defaultDate) {
+/**
+ * Разбирает «Купить молоко завтра 18:30 !1».
+ * Возвращает поля по отдельности и null там, где в тексте ничего не сказано:
+ * окну добавления нужно отличать «пользователь написал приоритет» от
+ * «пользователь про приоритет промолчал» — второе не должно затирать выбранное
+ * кнопкой.
+ */
+export function parseQuickInput(raw) {
   let text = ' ' + raw.trim() + ' ';
-  let date = defaultDate ?? null;
+  let date = null;
   let time = null;
-  let priority = 4;
+  let priority = null;
 
   const take = (re, fn) => {
     const m = text.match(re);
@@ -481,15 +488,10 @@ export function parseQuickInput(raw, defaultDate) {
       take(/\sпослезавтра\s/i, () => { date = addDaysStr(today, 2); });
     }
   }
+  // «в 18:30» без дня — это про сегодня: время без даты приложение хранить не умеет.
   if (time && !date) date = today;
 
-  return { title: text.trim().replace(/\s{2,}/g, ' '), due: combineDue(date, time), priority };
-}
-
-function defaultDateForView(view) {
-  if (view === 'today') return todayStr();
-  if (view === 'tomorrow') return addDaysStr(todayStr(), 1);
-  return null;
+  return { title: text.trim().replace(/\s{2,}/g, ' '), date, time, priority };
 }
 
 /** Подгоняет высоту textarea под содержимое: одна строка — одна строка. */
@@ -498,29 +500,73 @@ function autoGrow(el) {
   el.style.height = el.scrollHeight + 'px';
 }
 
-function composer() {
+/**
+ * Окно добавления задачи. Единственный вход в ввод: строки над списком больше нет.
+ *
+ * Приоритет и срок спрашиваются шагами, тем же компонентом, что и везде. «Добавить»
+ * ждёт ответа на оба вопроса: раньше раздел молча подставлял сегодняшний день, и
+ * «Сегодня» набивался задачами, которых туда никто не клал.
+ *
+ * Окно не закрывается после Enter — поле очищается, шаги сбрасываются, тост
+ * подтверждает, что задача ушла в список. Иначе привычка «закинуть три дела подряд»
+ * стоила бы трёх нажатий на «+».
+ */
+export function openComposer() {
   // Именно textarea, а не input: input по спецификации вырезает переводы строк,
   // и вставленный многострочный текст молча схлопывался бы в одну строку.
   const input = h('textarea', {
+    class: 'composer-input',
     rows: '1',
-    // На узком экране длинная подсказка всё равно обрезается на полуслове,
-    // а рядом с ней ещё и скрыт хинт «Enter — добавить».
-    placeholder: window.innerWidth <= 620
-      ? 'Новая задача…  («завтра 18:30 !1»)'
-      : 'Новая задача…  («завтра 18:30 !1» тоже понимается)',
+    placeholder: 'Новая задача…  («завтра 18:30 !1» тоже понимается)',
     'aria-label': 'Новая задача',
     autocomplete: 'off',
   });
-  input.addEventListener('input', () => autoGrow(input));
+
+  const addBtn = h('button', { class: 'btn btn-primary', disabled: true, onclick: () => submit() }, 'Добавить');
+  const hint = h('span', { class: 'muted composer-hint' });
+
+  const syncFoot = () => {
+    const ready = picker.isComplete() && input.value.trim();
+    addBtn.disabled = !ready;
+    hint.textContent = ready
+      ? 'Enter — добавить, ⇧Enter — перенос'
+      : (picker.pendingStep() === 'priority' ? 'Выберите приоритет' : 'Выберите, когда делать');
+  };
+
+  const picker = schedulePicker({ onChange: () => syncFoot() });
+
+  // Текст и кнопки пишут в одно состояние. Из разбора применяем только то, что
+  // в тексте действительно изменилось, — иначе оставшееся в строке «завтра»
+  // затирало бы «Сегодня», нажатое кнопкой уже после набора.
+  let seen = { date: null, time: null, priority: null };
+  input.addEventListener('input', () => {
+    autoGrow(input);
+    const p = parseQuickInput(input.value);
+    const patch = {};
+    if (p.priority !== seen.priority && p.priority !== null) patch.priority = p.priority;
+    if (p.date !== seen.date || p.time !== seen.time) {
+      patch.due = combineDue(p.date, p.time);
+      patch.dateAnswered = p.date != null;
+    }
+    seen = { date: p.date, time: p.time, priority: p.priority };
+    if (Object.keys(patch).length) picker.set(patch);
+    syncFoot();
+  });
 
   const submit = () => {
-    const value = input.value.trim();
-    if (!value) return;
-    const parsed = parseQuickInput(value, defaultDateForView(ctx.view));
-    if (!parsed.title) return;
-    const task = M.createTask(parsed);
+    const raw = input.value.trim();
+    if (!raw) { input.focus(); return; }
+    const pending = picker.pendingStep();
+    if (pending) { picker.nudge(pending); return; }
+    const { title } = parseQuickInput(raw);
+    if (!title) return;
+    const v = picker.get();
+    const task = M.createTask({ title, due: v.due, priority: v.priority ?? 4 });
     input.value = '';
     autoGrow(input);
+    seen = { date: null, time: null, priority: null };
+    picker.set({ priority: null, due: null, dateAnswered: false, calendar: false });
+    syncFoot();
     // Окно остаётся открытым: следующая задача вводится сразу, без нового жеста.
     input.focus();
     toast('Задача добавлена', { actionLabel: 'Открыть', action: () => openEditor(task.id) });
@@ -531,27 +577,18 @@ function composer() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
   });
 
-  return h('div', { class: 'composer' },
-    h('button', { class: 'plus', 'aria-label': 'Добавить', onclick: submit }, '+'),
-    input,
-    h('span', { class: 'composer-hint' }, 'Enter — добавить, ⇧Enter — перенос'));
-}
+  syncFoot();
 
-/**
- * Окно добавления задачи. Единственный вход в ввод: строки над списком больше нет.
- *
- * Окно не закрывается после Enter — поле очищается, тост подтверждает, что задача
- * ушла в список. Иначе привычка «закинуть три дела подряд» стоила бы трёх нажатий
- * на «+». Закрывают его Esc, крестик или клик мимо, как любое другое окно.
- */
-export function openComposer() {
-  const form = composer();
-  const ui = openSheet({ title: 'Новая задача', bodyNodes: form });
+  const ui = openSheet({
+    title: 'Новая задача',
+    bodyNodes: [h('div', { class: 'field' }, input), picker.node],
+    footNodes: [hint, h('span', { class: 'spacer' }), addBtn],
+  });
   ui.sheet.classList.add('sheet-composer');
   // Фокус — синхронно, прямо в обработчике жеста. Из setTimeout или после
   // анимации iOS клавиатуру молча не поднимет, и добавление с телефона
   // превратится в двойное касание.
-  form.querySelector('textarea').focus();
+  input.focus();
   return ui;
 }
 
@@ -599,6 +636,51 @@ export function agentFeed(task) {
 }
 
 /**
+ * Окно разбора входящего. Спрашивает то же, что и окно новой задачи, и ничего
+ * не решает за пользователя: до ответа на шаг «когда» запись остаётся входящей.
+ * Полную карточку задачи не открываем — разбор на то и разбор, чтобы пройти
+ * очередь, а не залипнуть в первой же записи.
+ */
+export function openInboxSort(taskId) {
+  const task = M.getTask(taskId);
+  if (!task) return null;
+
+  let ui;
+  const picker = schedulePicker({
+    value: { priority: task.priority },
+    onChange: (v) => {
+      if (v.priority !== null) M.updateTask(taskId, { priority: v.priority });
+      if (!v.dateAnswered) return;
+      // Первый ответ переводит запись из входящих в задачи, второй (время дня)
+      // приходит уже по задаче — тогда правим срок напрямую.
+      if (v.due && !M.inboxToTask(taskId, datePart(v.due), timePart(v.due))) {
+        M.updateTask(taskId, { due: v.due });
+      }
+      ctx.refresh();
+    },
+    onDone: () => {
+      const done = M.getTask(taskId);
+      ui?.close();
+      toast(done && done.due ? `В задачу · ${fmtDue(done.due).toLowerCase()}` : 'Осталось во «Входящих»');
+    },
+  });
+
+  ui = openSheet({
+    title: 'Разобрать',
+    bodyNodes: [
+      h('div', { class: 'sort-head' },
+        sourceLine(task),
+        h('div', { class: 'inbox-title' }, task.title ? linkify(task.title) : 'Без названия')),
+      picker.node,
+    ],
+    footNodes: [h('span', { class: 'spacer' }), h('button', { class: 'btn', onclick: () => ui.close() }, 'Позже')],
+    onClose: () => ctx.refresh(),
+  });
+  ui.sheet.classList.add('sheet-composer');
+  return ui;
+}
+
+/**
  * Карточка входящего. Намеренно не строка задачи: ни даты, ни приоритета,
  * ни кружков переноса — планировать здесь нечего, здесь только разбирают.
  */
@@ -613,13 +695,7 @@ function inboxCard(task) {
     h('div', { class: 'inbox-actions' },
       h('button', {
         class: 'btn btn-primary',
-        onclick: () => {
-          // Дата — сегодняшняя: без неё запись осталась бы входящей, а редактор
-          // открылся бы на записи, которой в разделе задач ещё нет.
-          if (!M.inboxToTask(task.id)) return;
-          ctx.refresh();
-          openEditor(task.id);
-        },
+        onclick: () => openInboxSort(task.id),
       }, 'В задачу'),
       h('button', {
         class: 'btn btn-ghost',
@@ -779,59 +855,74 @@ export function openEditor(taskId) {
   notesInput.addEventListener('blur', showNotes);
   renderNotesView();
 
-  // --- Приоритет
-  const prioWrap = h('div', { class: 'prio-grid' });
-  const renderPrio = () => {
+  // --- Приоритет и срок
+  // Свёрнуто показываем значения, а не наборы кнопок: карточка открывается, чтобы
+  // посмотреть задачу, а не чтобы каждый раз перевыбирать день. Правка раскрывает
+  // тот же пошаговый выбор, что и в окне добавления.
+  const schedWrap = h('div', { class: 'sched-rows' });
+  let expanded = null; // 'priority' | 'when' | null
+  let picker = null;
+
+  const whenText = () => {
     reread();
-    clear(prioWrap);
-    for (const p of Object.values(M.PRIORITIES)) {
-      prioWrap.append(h('button', {
-        class: 'prio-btn',
-        style: { '--c': `var(${p.varName})` },
-        'aria-pressed': task.priority === p.id ? 'true' : 'false',
-        onclick: () => { apply({ priority: p.id }); renderPrio(); },
-      },
-        h('span', { class: 'dot' }),
-        h('div', null,
-          h('div', { class: 'lbl' }, `${p.code} · ${p.name}`),
-          h('div', { class: 'sub' }, p.hint))));
+    if (!task.due) return 'без даты — во «Входящих»';
+    return fmtDue(task.due).toLowerCase();
+  };
+  const prioText = () => {
+    reread();
+    const p = M.PRIORITIES[task.priority] || M.PRIORITIES[4];
+    return `${p.code} · ${p.name.toLowerCase()}`;
+  };
+
+  function makePicker(kind) {
+    reread();
+    if (kind === 'priority') {
+      return schedulePicker({
+        steps: ['priority'],
+        value: { priority: task.priority },
+        onChange: (v) => { apply({ priority: v.priority }); collapse(); },
+      });
     }
-  };
-  renderPrio();
-
-  // --- Дата и время
-  const dateInput = h('input', { class: 'input', type: 'date', value: datePart(task.due) || '' });
-  const timeInput = h('input', { class: 'input', type: 'time', value: timePart(task.due) || '' });
-  const quickWrap = h('div', { class: 'chips', style: { marginBottom: '8px' } });
-
-  const syncDateInputs = () => {
-    reread();
-    dateInput.value = datePart(task.due) || '';
-    timeInput.value = timePart(task.due) || '';
-    renderRepeat();
-  };
-  const setDue = (date, time) => { apply({ due: combineDue(date, time) }); syncDateInputs(); };
-
-  const quick = [
-    ['Сегодня', () => M.QUICK_DATES.today()],
-    ['Завтра', () => M.QUICK_DATES.tomorrow()],
-    ['Через 2 дня', () => M.QUICK_DATES.in2days()],
-    ['Следующая неделя', () => M.QUICK_DATES.nextWeek()],
-  ];
-  for (const [label, fn] of quick) {
-    quickWrap.append(h('button', { class: 'chip', onclick: () => setDue(fn(), timePart(task.due)) }, label));
+    return schedulePicker({
+      steps: ['date', 'time'],
+      value: { priority: task.priority, due: task.due, dateAnswered: true },
+      // Снятая дата снимает и повтор: серия без опорного дня повторять нечего.
+      onChange: (v) => apply(v.due ? { due: v.due } : { due: null, repeat: null }),
+      onDone: () => collapse(),
+    });
   }
-  quickWrap.append(h('button', {
-    class: 'chip chip-clear',
-    onclick: () => { apply({ due: null, repeat: null }); syncDateInputs(); },
-  }, '✕ Убрать дату'));
 
-  dateInput.addEventListener('change', () => setDue(dateInput.value || null, timeInput.value || null));
-  timeInput.addEventListener('change', () => {
-    const date = dateInput.value || todayStr();
-    setDue(date, timeInput.value || null);
-  });
+  function collapse() { expanded = null; picker = null; renderSched(); }
 
+  function toggle(kind) {
+    // Раскрытой держим одну строку: два развёрнутых набора кнопок — это ровно та
+    // стена, от которой уходили.
+    expanded = expanded === kind ? null : kind;
+    picker = expanded ? makePicker(expanded) : null;
+    renderSched();
+  }
+
+  function valueRow(kind, label, text) {
+    const open = expanded === kind;
+    return h('div', { class: `sched-value${open ? ' open' : ''}` },
+      h('button', {
+        class: 'sched-value-btn',
+        'aria-expanded': open ? 'true' : 'false',
+        onclick: () => toggle(kind),
+      },
+        h('span', { class: 'k' }, label),
+        h('span', { class: 'v' }, text),
+        h('span', { class: 'ed', 'aria-hidden': 'true' }, open ? '▴' : '✎')));
+  }
+
+  function renderSched() {
+    clear(schedWrap);
+    schedWrap.append(valueRow('priority', 'Приоритет', prioText()));
+    if (expanded === 'priority' && picker) schedWrap.append(picker.node);
+    schedWrap.append(valueRow('when', 'Когда', whenText()));
+    if (expanded === 'when' && picker) schedWrap.append(picker.node);
+    renderRepeat();
+  }
   // --- Повтор
   const repeatWrap = h('div');
   function renderRepeat() {
@@ -855,10 +946,8 @@ export function openEditor(taskId) {
 
     const push = () => {
       if (!freqSelect.value) { apply({ repeat: null }); renderRepeat(); return; }
-      if (!task.due) {
-        apply({ due: todayStr() });
-        syncDateInputs();
-      }
+      // Повтор без опорного дня невозможен: серию не от чего отсчитывать.
+      if (!task.due) apply({ due: todayStr() });
       apply({
         repeat: {
           freq: freqSelect.value,
@@ -868,9 +957,7 @@ export function openEditor(taskId) {
         },
         due: combineDue(datePart(task.due) || todayStr(), repeatTime.value || timePart(task.due)),
       });
-      dateInput.value = datePart(task.due) || '';
-      timeInput.value = timePart(task.due) || '';
-      renderRepeat();
+      renderSched();
     };
 
     freqSelect.addEventListener('change', push);
@@ -888,7 +975,7 @@ export function openEditor(taskId) {
         `${M.repeatLabel(task.repeat)}. После отметки «сделано» задача сама переедет на ${fmtDayLabel(next).toLowerCase()}.`));
     }
   }
-  renderRepeat();
+  renderSched();
 
   // --- Подзадачи
   const subWrap = h('div', { class: 'subtasks' });
@@ -943,12 +1030,8 @@ export function openEditor(taskId) {
       srcNode,
       feedNode,
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Подзадачи'), subWrap),
-      h('div', { class: 'field' },
-        h('span', { class: 'field-label' }, 'Когда'),
-        quickWrap,
-        h('div', { class: 'row' }, dateInput, timeInput)),
+      h('div', { class: 'field' }, schedWrap),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Повтор'), repeatWrap),
-      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Приоритет'), prioWrap),
     ],
     footNodes: [
       h('button', {
@@ -980,9 +1063,11 @@ export function openEditor(taskId) {
     reread();
     if (document.activeElement !== titleInput) { titleInput.value = task.title; autoGrow(titleInput); }
     if (document.activeElement !== notesInput) { notesInput.value = task.notes; renderNotesView(); }
-    renderPrio();
     if (!subWrap.contains(document.activeElement)) renderSubs();
-    syncDateInputs();
+    // Раскрытую строку не трогаем: перерисовка выбросила бы из-под пальца
+    // наполовину пройденный шаг.
+    if (!expanded) renderSched();
+    else renderRepeat();
   });
 
   // scrollHeight имеет смысл только когда элемент уже в документе.
