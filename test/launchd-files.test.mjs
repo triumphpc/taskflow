@@ -68,7 +68,7 @@ test('launchd: fallback launch needs only the TaskFlow variables (U1 fallback, A
 
 test('launchd: plist template has the required keys and placeholders (AC-008, AC-019)', async () => {
   const plist = await readFile(A('com.taskflow.delegation.plist.template'), 'utf8');
-  assert.match(plist, /<key>StartInterval<\/key>\s*<integer>1800<\/integer>/);
+  assert.match(plist, /<key>StartInterval<\/key>\s*<integer>60<\/integer>/);
   assert.match(plist, /<key>RunAtLoad<\/key>\s*<false\/>/);
   assert.match(plist, /<key>ProcessType<\/key>\s*<string>Background<\/string>/);
   assert.match(plist, /__REPO__\/agent\/run-delegation\.sh/);
