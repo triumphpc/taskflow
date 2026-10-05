@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 420" role="img" aria-labelledby="t2 d2">
+<title id="t2">Прогон задачи: захват, опрос, прерывание, условная запись</title><desc id="d2">Демон захватывает задачу на сервере, запускает claude, раз в 60 секунд проверяет статус, при закрытии убивает процесс, а результат записывает условной командой agent_finish.</desc>
+<style>text{font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2933}.t{font-size:15px;font-weight:600}.s{font-size:12px;fill:#52606d}.b{fill:#f5f7fa;stroke:#9aa5b1;stroke-width:1.2}.ok{fill:#e3f6e8;stroke:#2f8f4e;stroke-width:1.4}.bad{fill:#fde8e8;stroke:#c0392b;stroke-width:1.4}.ln{stroke:#52606d;stroke-width:1.4;fill:none}.rd{stroke:#c0392b;stroke-width:1.6;fill:none}.gr{stroke:#2f8f4e;stroke-width:1.6;fill:none}</style><defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#52606d"/></marker></defs>
+<text class="t" x="40" y="24">Демон (Mac)</text><text class="t" x="330" y="24">Сервер (/mcp, /api/state)</text><text class="t" x="590" y="24">claude -p</text>
+<path class="ln" d="M80 34 L80 405"/><path class="ln" d="M410 34 L410 405"/><path class="ln" d="M650 34 L650 405"/>
+<path class="ln" marker-end="url(#a)" d="M80 62 L408 62"/><text class="s" x="110" y="55">agent_claim: только из delegated, выдаёт claimToken</text>
+<path class="ln" marker-end="url(#a)" d="M80 100 L648 100"/><text class="s" x="190" y="93">запуск в отдельной группе процессов, таймаут 15 мин</text>
+<rect class="b" x="90" y="120" width="310" height="86" rx="6"/><text x="102" y="142">Каждые 60 секунд, без модели:</text><text class="s" x="102" y="162">GET /api/state: задача открыта, делегирована,</text><text class="s" x="102" y="180">claimToken тот же?</text><text class="s" x="102" y="198">нет: SIGTERM группе процессов, запись не делается</text>
+<path class="rd" marker-end="url(#a)" d="M400 190 L652 190"/><text class="s" x="440" y="183">SIGTERM</text>
+<path class="ln" marker-start="url(#a)" d="M648 250 L90 250"/><text class="s" x="300" y="243">stdout: статус и текст результата</text>
+<path class="ln" marker-end="url(#a)" d="M80 290 L408 290"/><text class="s" x="110" y="283">agent_finish(claimToken, статус, текст)</text>
+<rect class="ok" x="420" y="305" width="300" height="42" rx="6"/><text x="432" y="323">Применено, если статус in_progress</text><text class="s" x="432" y="340">и claimToken совпал; иначе отклонено, без записи</text>
+<rect class="b" x="90" y="365" width="310" height="40" rx="6"/><text x="102" y="382">Начало прогона: reaper</text><text class="s" x="102" y="398">in_progress старше 20 мин переводится в failed</text>
+</svg>

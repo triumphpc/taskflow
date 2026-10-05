@@ -2,6 +2,7 @@
 // Бэкенда нет: всё живёт в браузере, перенос между устройствами — экспорт/импорт JSON.
 
 import { uid } from './core.js';
+import { normalizeAgent } from './agent.js';
 
 const KEY = 'taskflow.state.v1';
 const SCHEMA = 1;
@@ -128,6 +129,7 @@ function normalizeSource(s) {
 
 /** Приводит задачу из хранилища к текущей форме — на случай старых записей. */
 export function normalizeTask(t) {
+  const agent = normalizeAgent(t.agent);
   return {
     id: t.id || uid(),
     title: t.title || '',
@@ -160,6 +162,8 @@ export function normalizeTask(t) {
         .filter((n) => n && n.text)
         .map((n) => ({ at: Number(n.at) || Date.now(), text: String(n.text) }))
       : [],
+    // Блок делегирования агенту: ключ есть, только если он был в записи (AC-023).
+    ...(agent ? { agent } : {}),
   };
 }
 

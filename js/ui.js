@@ -7,6 +7,7 @@ import { schedulePicker } from './scheduler.js';
 import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
 import * as S from './sync.js';
 import * as M from './model.js';
+import { agentView } from './agent.js';
 
 /** Заполняется из app.js: {view, setView, refresh}. */
 export const ctx = { view: 'today', setView: () => {}, refresh: () => {} };
@@ -141,6 +142,35 @@ const SNOOZE = [
   ['Пн', 'Следующая неделя', () => M.QUICK_DATES.nextWeek()],
 ];
 
+/** Выполняет действие над задачей и сообщает, если оно сняло делегирование (перенос срока). */
+function withDelegationToast(taskId, action) {
+  const before = M.getTask(taskId)?.agent?.status || null;
+  const result = action();
+  if (before && !(M.getTask(taskId)?.agent?.status || null)) toast('Делегирование снято');
+  return result;
+}
+
+/** Галка «Делегировать агенту»: отдельная кнопка, не путается с кружком «готово». */
+function delegateToggle(task, view) {
+  const name = oneLine(task.title) || 'без названия';
+  return h('button', {
+    class: `delegate${view.checked ? ' is-on' : ''}`,
+    role: 'checkbox',
+    'aria-checked': view.checked ? 'true' : 'false',
+    'aria-label': view.checked ? `Снять делегирование: ${name}` : `Делегировать агенту: ${name}`,
+    title: view.checked ? 'Снять делегирование' : 'Делегировать агенту',
+    onclick: (e) => {
+      e.stopPropagation();
+      M.setDelegation(task.id, !view.checked);
+    },
+  }, h('span', { class: 'delegate-box', 'aria-hidden': 'true' }, view.checked ? '✓' : ''));
+}
+
+/** Текстовый бейдж статуса: цвет никогда не единственный носитель. */
+function agentBadge(view) {
+  return h('span', { class: 'agent-badge', title: view.full }, view.short);
+}
+
 function snoozeButtons(task) {
   return h('div', { class: 'snooze' }, ...SNOOZE.map(([glyph, label, when]) => h('button', {
     class: 'snooze-btn',
@@ -148,7 +178,7 @@ function snoozeButtons(task) {
     'aria-label': `Перенести на ${label.toLowerCase()}: ${oneLine(task.title) || 'без названия'}`,
     onclick: (e) => {
       e.stopPropagation();
-      M.scheduleTask(task.id, when());
+      withDelegationToast(task.id, () => M.scheduleTask(task.id, when()));
       toast(`Перенесено: ${label.toLowerCase()}`);
     },
   }, glyph)));
@@ -159,6 +189,7 @@ function taskRow(task) {
   const overdue = !task.done && M.isOverdue(task.due);
   const isToday = !task.done && task.due && datePart(task.due) === todayStr() && !overdue;
   const subDone = task.subtasks.filter((s) => s.done).length;
+  const view = agentView(task, todayStr());
 
   const meta = [];
   if (dueStr) {
@@ -168,10 +199,11 @@ function taskRow(task) {
   if (task.repeat) meta.push(h('span', { class: 'rep' }, '↻ ' + M.repeatLabel(task.repeat)));
   if (task.subtasks.length) meta.push(h('span', null, `☑ ${subDone}/${task.subtasks.length}`));
   if (task.priority <= 3) meta.unshift(h('span', { class: 'chip-p' }, M.PRIORITIES[task.priority].code));
+  if (view.status) meta.unshift(agentBadge(view));
 
   const li = h('li', {
     class: `task${task.done ? ' done' : ''}`,
-    dataset: { id: task.id, p: String(task.priority) },
+    dataset: { id: task.id, p: String(task.priority), ...(view.tone ? { agent: view.tone } : {}) },
   },
     h('button', {
       class: 'check',
@@ -182,6 +214,7 @@ function taskRow(task) {
       h('div', { class: 'task-title' }, task.title ? linkify(task.title) : 'Без названия'),
       meta.length ? h('div', { class: 'task-meta' }, ...meta) : null),
     h('button', { class: 'task-open', 'aria-label': `Открыть: ${oneLine(task.title)}`, onclick: () => openEditor(task.id) }, 'открыть'),
+    view.canToggle ? delegateToggle(task, view) : null,
     task.done ? null : snoozeButtons(task),
     dragHandle(task));
 
@@ -240,7 +273,7 @@ function onRowDown(e, li, fromHandle) {
   if (!li || !list || list.dataset.noDrag) return;
   // Кружок «готово» — только переключатель: дрогнувшая на нём рука
   // не должна утаскивать задачу вместо отметки.
-  if (!fromHandle && e.target.closest?.('.check, .snooze, .linkified')) return;
+  if (!fromHandle && e.target.closest?.('.check, .snooze, .delegate, .linkified')) return;
 
   // Пальцем по строке ждём удержания, мышью и за ручку — обычный порог сдвига.
   const hold = e.pointerType === 'touch' && !fromHandle;
@@ -407,7 +440,7 @@ function applyDrop(taskId, fromList, toList) {
   if (toList !== fromList) {
     const drop = toList.dataset.drop;
     const dropDue = drop === 'clear' ? null : drop;
-    if (M.moveToGroupDate(taskId, dropDue)) {
+    if (withDelegationToast(taskId, () => M.moveToGroupDate(taskId, dropDue))) {
       rescheduled = true;
       toast(dropDue === null ? 'Дата снята' : `Перенесено: ${fmtDayLabel(dropDue).toLowerCase()}`);
     }
@@ -632,7 +665,8 @@ export function agentFeed(task) {
   if (!task.agentNotes.length) return null;
   return h('ul', { class: 'inbox-feed' }, ...task.agentNotes.map((n) => h('li', null,
     h('span', { class: 'at' }, fmtStamp(n.at)),
-    h('span', null, linkify(n.text)))));
+    // Текст агента — только текстом, без ссылок (SEC03): под prompt injection агент может подложить URL.
+    h('span', null, String(n.text)))));
 }
 
 /**
@@ -795,7 +829,7 @@ export function openEditor(taskId) {
   // устаревший снимок — приоритет не подсвечивался, подзадачи не появлялись.
   const reread = () => { task = M.getTask(taskId) || task; return task; };
 
-  const apply = (patch) => { M.updateTask(task.id, patch); ctx.refresh(); };
+  const apply = (patch) => { withDelegationToast(task.id, () => M.updateTask(task.id, patch)); ctx.refresh(); };
   const applyQuiet = debounce((patch) => apply(patch), 400);
 
   // --- Заголовок и заметки
@@ -1021,6 +1055,11 @@ export function openEditor(taskId) {
   const feedNode = feed
     ? h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Заметки агента'), feed)
     : null;
+  const agentState = agentView(task, todayStr());
+  const agentNode = agentState.status
+    ? h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Агент'),
+      h('span', { class: 'agent-line', dataset: { agent: agentState.tone } }, `Агент: ${agentState.full}`))
+    : null;
 
   const sheet = openSheet({
     title: 'Задача',
@@ -1028,6 +1067,7 @@ export function openEditor(taskId) {
       h('div', { class: 'field' }, titleInput),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Заметки'), notesView, notesInput),
       srcNode,
+      agentNode,
       feedNode,
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Подзадачи'), subWrap),
       h('div', { class: 'field' }, schedWrap),

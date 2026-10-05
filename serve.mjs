@@ -76,6 +76,24 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  // Условные переходы делегирования агенту: claim, finish, reap (ADR-002).
+  if (route === '/agent/transition' && req.method === 'POST') {
+    let body;
+    try {
+      body = JSON.parse(await readBody(req) || '{}');
+    } catch (err) {
+      sendJson(res, 400, { error: `Некорректный JSON: ${err.message}` });
+      return;
+    }
+    if (!['claim', 'finish', 'reap'].includes(body?.op)) {
+      sendJson(res, 400, { error: 'Ожидалось поле op: claim, finish или reap' });
+      return;
+    }
+    const result = await store.agentTransition(body);
+    sendJson(res, result.ok ? 200 : 409, result);
+    return;
+  }
+
   sendJson(res, 404, { error: 'Нет такого метода' });
 }
 
