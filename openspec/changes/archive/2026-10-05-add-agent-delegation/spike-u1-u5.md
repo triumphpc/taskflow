@@ -1,17 +1,40 @@
 # Spike U1 + U5: headless claude под launchd и состав инструментов
 
-**Status**: spike подготовлен, прогон claude является ручным шагом пользователя. Блокирующая зависимость
-T01 снята решением пользователя; allowlist (`agent/lib/policy.mjs`) и argv (`agent/run-delegation.sh`) построены по
-design.md с полными именами `mcp__<server>__<tool>` и будут сверены с выводом spike до QA.
+**Status**: прогон выполнен пользователем 2026-10-05 (`SPIKE_MODE=env`, временное задание launchd), сводка разобрана.
 
 ## Вердикты
 
-U1: PENDING
-U5: PENDING
-SRC-35: env-launch PENDING, fallback PENDING
+U1: PASS
+U5: PASS
+SRC-35: env-launch PASS, fallback n/a
 
 Строки выше заменить на `PASS` или `FAIL` после ручного прогона. `test/spike-report.test.mjs` пропускается,
 пока стоит `PENDING`, и падает при `FAIL`.
+
+## Результаты прогона 2026-10-05
+
+- **U1.** `claude --agent ai-space-assistant -p` с окружением из env-файла стартует под launchd с коротким `PATH`
+  (r1–r4: exit 0, `is_error: false`, stderr пуст). Конверт `--output-format json` содержит `type: result`, `result`,
+  `total_cost_usd`; `result` — валидный JSON `{"status":"review","text":...}`: агент подготовил черновик поздравления и
+  ничего не отправил. Стоимость прогона 0.13–0.27 USD, в пределах `--max-budget-usd`.
+- **U5, права.** `permission_mode: dontAsk` во всех прогонах; `denied_present: []` — ни один инструмент из deny
+  (включая подключённые коннекторы claude.ai Gmail, Drive, Calendar, Docs) агенту не виден; `taskflow_tools: []`.
+  `Read`/`Glob`/`Grep` отсутствуют в наборе инструментов.
+- **U5, субагенты (r4).** Агент вызвал субагента через `Agent` (1 вызов), субагент искал инструменты (`ToolSearch`) и
+  не получил доступа к файлам: `u5_fs_tool_calls: 0`, `u5_fs_tool_calls_in_subagents: 0`,
+  `u5_read_outside_sandbox_rejected: true`, `u5_subagent_inherits_deny: true`, `u5_canary_leaked: false`.
+  Оговорка: субагент не пытался вызвать `Read` напрямую — инструмента просто не было в его наборе; это и есть ожидаемое
+  поведение deny.
+- **SRC-35.** Основной способ (env-файл) работает, запасной `zsh -ic claude-paiw` не понадобился.
+
+### Замечания, не блокирующие запуск
+
+- `allowed_missing` содержит инструменты Jira, Confluence и GitLab: в headless-режиме эти MCP-серверы на момент старта
+  ещё в состоянии `pending` (GitLab в r3 `connected`, в r2/r4 `failed`). Сценарии с Jira и ревью MR могут закончиться
+  `needs_info`/`failed`, пока серверы не успевают подключиться. Решение — отдельной задачей (таймаут подключения MCP
+  или повтор при `pending`).
+- `Agent` попадает в `allowed_missing` из-за имени: в списке `init` встроенный инструмент называется `Task`, а вызов
+  идёт как `Agent` и разрешается правилом `Agent`. На поведение не влияет.
 
 ## Как запустить (пользователь, из корня worktree)
 
