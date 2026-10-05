@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" role="img" aria-labelledby="t1 d1">
+<title id="t1">Слияние записи задачи: целиком и по блокам</title><desc id="d1">Слева запись целиком: устаревшая копия клиента затирает блок agent. Справа слияние по блокам: сервер сохраняет agent, если во входящей записи его нет.</desc>
+<style>text{font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:13px;fill:#1f2933}.t{font-size:15px;font-weight:600}.s{font-size:12px;fill:#52606d}.b{fill:#f5f7fa;stroke:#9aa5b1;stroke-width:1.2}.ok{fill:#e3f6e8;stroke:#2f8f4e;stroke-width:1.4}.bad{fill:#fde8e8;stroke:#c0392b;stroke-width:1.4}.ln{stroke:#52606d;stroke-width:1.4;fill:none}.rd{stroke:#c0392b;stroke-width:1.6;fill:none}.gr{stroke:#2f8f4e;stroke-width:1.6;fill:none}</style><defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#52606d"/></marker></defs>
+<text class="t" x="20" y="26">Сейчас: запись целиком, побеждает больший updatedAt</text>
+<rect class="b" x="20" y="40" width="330" height="56" rx="6"/><text x="32" y="62">Сервер: задача, updatedAt 100</text><text class="s" x="32" y="82">agent: review, agentNotes: 1 запись</text>
+<rect class="b" x="20" y="130" width="330" height="56" rx="6"/><text x="32" y="152">Старый клиент: правит заголовок, updatedAt 120</text><text class="s" x="32" y="172">полей agent нет: normalizeTask их отбросил</text>
+<path class="ln" marker-end="url(#a)" d="M185 130 L185 100"/><text class="s" x="195" y="118">sync: 120 больше 100</text>
+<rect class="bad" x="20" y="226" width="330" height="70" rx="6"/><text x="32" y="250">Сервер после слияния</text><text class="s" x="32" y="270">agent и agentNotes потеряны</text><text class="s" x="32" y="286">результат агента пропал</text>
+<path class="rd" marker-end="url(#a)" d="M185 190 L185 224"/>
+<text class="t" x="400" y="26">Решение: поля пользователя по updatedAt, agent по agent.at</text>
+<rect class="b" x="400" y="40" width="340" height="56" rx="6"/><text x="412" y="62">Сервер: updatedAt 100, agent.at 90</text><text class="s" x="412" y="82">agent: review, agentNotes: 1 запись</text>
+<rect class="b" x="400" y="130" width="340" height="56" rx="6"/><text x="412" y="152">Старый клиент: заголовок, updatedAt 120</text><text class="s" x="412" y="172">ключа agent во входящей записи нет</text>
+<path class="ln" marker-end="url(#a)" d="M570 130 L570 100"/><text class="s" x="580" y="118">sync</text>
+<rect class="ok" x="400" y="226" width="340" height="70" rx="6"/><text x="412" y="250">Сервер после слияния</text><text class="s" x="412" y="270">заголовок новый (120); agent и заметки сохранены</text><text class="s" x="412" y="286">нет ключа agent означает не знаю, не стереть</text>
+<path class="gr" marker-end="url(#a)" d="M570 190 L570 224"/>
+</svg>
