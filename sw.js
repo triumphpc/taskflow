@@ -1,7 +1,7 @@
 // Офлайн-кеш оболочки приложения. Регистрируется только в secure context
 // (https:// или http://localhost) — иначе браузер service worker не разрешит.
 
-const CACHE = 'taskflow-v15';
+const CACHE = 'taskflow-v16';
 
 const SHELL = [
   './',
@@ -13,6 +13,7 @@ const SHELL = [
   './js/model.js',
   './js/store.js',
   './js/core.js',
+  './js/agent.js',
   './js/dom.js',
   './js/moments.js',
   './js/scheduler.js',

@@ -16,7 +16,7 @@ import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { readBody } from './sync.mjs';
 import {
@@ -24,19 +24,25 @@ import {
   datePart, timePart, combineDue, isAllDay, isOverdue, nextOccurrence,
   fmtDue, oneLine, plural,
 } from './js/core.js';
+import {
+  normalizeAgent, reconcileAgent, buildQueue, AGENT_LABELS,
+} from './js/agent.js';
 
 // Пакет ставится отдельно: приложение и serve.mjs работают без npm install,
-// зависимость нужна только этому файлу — поэтому импорт динамический.
+// зависимость нужна только запуску сервера (main) — поэтому импорт динамический
+// и происходит не при загрузке модуля: тесты импортируют TOOLS и normalizeTask без SDK.
 let McpServerCore, StreamableHTTPServerTransport, ListToolsRequestSchema, CallToolRequestSchema;
-try {
-  ({ Server: McpServerCore } = await import('@modelcontextprotocol/sdk/server/index.js'));
-  ({ StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js'));
-  ({ ListToolsRequestSchema, CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js'));
-} catch (err) {
-  console.error('Не найден пакет @modelcontextprotocol/sdk.');
-  console.error('Выполните `npm install` в каталоге проекта и запустите снова.');
-  console.error(`Подробность: ${err.message}`);
-  process.exit(1);
+async function loadSdk() {
+  try {
+    ({ Server: McpServerCore } = await import('@modelcontextprotocol/sdk/server/index.js'));
+    ({ StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js'));
+    ({ ListToolsRequestSchema, CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js'));
+  } catch (err) {
+    console.error('Не найден пакет @modelcontextprotocol/sdk.');
+    console.error('Выполните `npm install` в каталоге проекта и запустите снова.');
+    console.error(`Подробность: ${err.message}`);
+    process.exit(1);
+  }
 }
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -75,14 +81,14 @@ async function syncToken() {
   return null;
 }
 
-const MCP_TOKEN = await loadMcpToken();
+let MCP_TOKEN = '';
 
 /** Сравнение в постоянное время — чтобы по времени ответа не подбирали токен. */
 function checkToken(header) {
   const given = /^Bearer\s+(.+)$/i.exec(header || '')?.[1]?.trim() || '';
   const a = Buffer.from(given);
   const b = Buffer.from(MCP_TOKEN);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return MCP_TOKEN.length > 0 && a.length === b.length && timingSafeEqual(a, b);
 }
 
 const EXTRA_ORIGINS = (process.env.TASKFLOW_MCP_ORIGINS || '')
@@ -109,7 +115,7 @@ function originAllowed(origin) {
 /** Ошибка, которую показываем агенту текстом, без стектрейса. */
 class ToolError extends Error {}
 
-async function api(path, init = {}) {
+async function api(path, init = {}, { soft = false } = {}) {
   const token = await syncToken();
   if (!token) {
     throw new ToolError(
@@ -133,6 +139,8 @@ async function api(path, init = {}) {
     syncTokenCache = null;
     throw new ToolError(`Сервер синхронизации ${API_BASE} отклонил токен. Проверьте TASKFLOW_TOKEN или ${SYNC_TOKEN_FILE}.`);
   }
+  // soft: отказ 409 на условном переходе — штатный ответ, а не ошибка сервера.
+  if (soft && (res.status === 200 || res.status === 409)) return { status: res.status, json: await res.json() };
   if (!res.ok) {
     throw new ToolError(`Сервер синхронизации ответил ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
@@ -146,6 +154,7 @@ const pushTasks = (tasks, deleted = []) => api('/api/sync', { method: 'POST', bo
 
 /** Та же форма, что у приложения (js/store.js): старые записи дотягиваем до неё. */
 function normalizeTask(t) {
+  const agent = normalizeAgent(t.agent);
   return {
     id: t.id || uid(),
     title: t.title || '',
@@ -176,6 +185,8 @@ function normalizeTask(t) {
         .filter((n) => n && n.text)
         .map((n) => ({ at: Number(n.at) || Date.now(), text: String(n.text) }))
       : [],
+    // Блок делегирования агенту: ключ есть, только если он был в записи (AC-023).
+    ...(agent ? { agent } : {}),
   };
 }
 
@@ -329,6 +340,7 @@ function taskLine(t) {
   const subs = t.subtasks.length;
   if (subs) meta.push(`подзадачи ${t.subtasks.filter((s) => s.done).length}/${subs}`);
   if (t.notes) meta.push('есть заметка');
+  if (!t.done && t.agent?.status) meta.push(`агент: ${AGENT_LABELS[t.agent.status].short}`);
   parts.push(`— ${meta.join(' · ')}`);
   return parts.join(' ');
 }
@@ -354,6 +366,7 @@ const SOURCE_TITLES = {
 
 function taskDetails(t) {
   const out = [taskLine(t), `id: ${t.id}`];
+  if (!t.done && t.agent?.status) out.push(`Статус агента: ${AGENT_LABELS[t.agent.status].full}`);
   if (t.source?.url) out.push(`Источник: ${t.source.url}`);
   if (t.source?.ref) out.push(`Ссылка источника: ${t.source.ref}`);
   if (t.notes) out.push('Заметки:', ...String(t.notes).split('\n').map((l) => '  ' + l));
@@ -413,6 +426,15 @@ function findSubtask(task, query) {
 }
 
 const touch = (t) => { t.updatedAt = Date.now(); t.kind = deriveKind(t); return t; };
+
+/**
+ * Сброс блока делегирования при действии пользователя: то же правило, что в js/model.js
+ * (reconcileAgent из M1). У задачи без блока ничего не меняется.
+ */
+function reconcile(t, ev) {
+  const block = reconcileAgent(t, ev, { today: todayStr(), now: Date.now() });
+  if (block) t.agent = block;
+}
 
 /** Отправляет изменённую задачу на сервер и возвращает её же. */
 async function saveTask(t) {
@@ -547,6 +569,7 @@ const TOOLS = [
       if (priority !== undefined) t.priority = priority;
       if (clearDue) { t.due = null; t.repeat = null; }
       else if (due !== undefined) t.due = resolveDue(due);
+      if (clearDue || due !== undefined) reconcile(t, 'due_change');
 
       const nextRepeat = buildRepeat(repeat, every, t.due, t.repeat);
       if (nextRepeat !== undefined) t.repeat = nextRepeat;
@@ -573,6 +596,7 @@ const TOOLS = [
       // Явно заданное время побеждает; иначе сохраняем прежнее (у «весь день» его нет).
       t.due = combineDue(datePart(target), timePart(target) || timePart(t.due));
       if (t.repeat) t.repeat.time = timePart(t.due);
+      reconcile(t, 'due_change');
       await saveTask(t);
       return `Перенесено на ${fmtDue(t.due)}${isAllDay(t.due) ? ' (весь день)' : ''}:\n${taskLine(t)}`;
     },
@@ -592,6 +616,7 @@ const TOOLS = [
         if (!t.done) return `Задача и так в работе:\n${taskLine(t)}`;
         t.done = false;
         t.completedAt = null;
+        reconcile(t, 'reopen');
         await saveTask(t);
         return `Вернул в работу:\n${taskLine(t)}`;
       }
@@ -604,6 +629,7 @@ const TOOLS = [
         t.due = combineDue(nextDate, t.repeat.time || timePart(t.due));
         t.subtasks = t.subtasks.map((s) => ({ ...s, done: false }));
         t.notifiedFor = null;
+        reconcile(t, 'repeat');
         await saveTask(t);
         return `Повтор: следующий раз ${fmtDue(t.due)}\n${taskLine(t)}`;
       }
@@ -611,6 +637,7 @@ const TOOLS = [
       if (t.done) return `Задача уже выполнена:\n${taskLine(t)}`;
       t.done = true;
       t.completedAt = Date.now();
+      reconcile(t, 'close');
       await saveTask(t);
       return `Выполнено:\n${taskLine(t)}`;
     },
@@ -779,7 +806,83 @@ const TOOLS = [
       return `Заметка добавлена к «${oneLine(t.title)}» (${shortId(t.id)}). Всего заметок агента: ${t.agentNotes.length}.`;
     },
   },
+  // ---------- Служебные инструменты демона делегирования ----------
+  // Ответ — одна строка JSON; отказ — isError и текст AGENT_REJECTED:<reason>.
+  {
+    name: 'agent_queue',
+    description: 'Служебный инструмент демона делегирования, из диалога не вызывать. Очередь делегированных задач на сегодня и просроченные in_progress.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        today: { type: 'string', description: 'Локальная дата демона YYYY-MM-DD; по умолчанию дата сервера.' },
+        task_id: { type: 'string', description: 'Полный id задачи: вернуть её текущее состояние в поле task.' },
+      },
+    },
+    async run({ today, task_id: taskId } = {}) {
+      const day = today === undefined ? todayStr() : String(today);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new ToolError('AGENT_REJECTED:bad_request');
+      const tasks = await fetchTasks();
+      const now = Date.now();
+      const { queue, stale } = buildQueue(tasks, { today: day, now });
+      const out = {
+        today: day,
+        queue: queue.map((t) => ({ id: t.id, title: t.title, notes: t.notes, due: t.due, priority: t.priority, delegatedAt: t.agent.at })),
+        stale: stale.map((t) => ({ id: t.id, claimedAt: t.agent.claimedAt })),
+      };
+      if (taskId !== undefined) {
+        const t = tasks.find((x) => x.id === String(taskId));
+        out.task = t
+          ? { id: t.id, exists: true, done: t.done, status: t.agent?.status ?? null, claimToken: t.agent?.claimToken ?? null }
+          : { id: String(taskId), exists: false };
+      }
+      return JSON.stringify(out);
+    },
+  },
+  {
+    name: 'agent_claim',
+    description: 'Служебный инструмент демона делегирования, из диалога не вызывать. Взять делегированную задачу в работу.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Полный id задачи.' },
+        today: { type: 'string', description: 'Локальная дата демона YYYY-MM-DD.' },
+      },
+      required: ['task_id', 'today'],
+    },
+    async run({ task_id: taskId, today }) {
+      const r = await transition({ op: 'claim', id: taskId, today });
+      return JSON.stringify({ ok: true, claimToken: r.agent.claimToken, task: r.task });
+    },
+  },
+  {
+    name: 'agent_finish',
+    description: 'Служебный инструмент демона делегирования, из диалога не вызывать. Записать результат работы агента (review, needs_info, failed) или закрыть по TTL.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: 'Полный id задачи.' },
+        claim_token: { type: 'string', description: 'Токен, выданный agent_claim.' },
+        status: { type: 'string', enum: ['review', 'needs_info', 'failed'] },
+        text: { type: 'string', description: 'Результат, вопрос или причина.' },
+        by_ttl: { type: 'boolean', description: 'Закрыть зависший in_progress как failed по TTL (токен и статус не нужны).' },
+      },
+      required: ['task_id'],
+    },
+    async run({ task_id: taskId, claim_token: claimToken, status, text, by_ttl: byTtl }) {
+      const r = byTtl === true
+        ? await transition({ op: 'reap', id: taskId })
+        : await transition({ op: 'finish', id: taskId, claimToken, status, text });
+      return JSON.stringify({ ok: true, status: r.agent.status });
+    },
+  },
 ];
+
+/** Условный переход на сервере. Отказ превращается в ToolError('AGENT_REJECTED:<reason>'). */
+async function transition(req) {
+  const { status, json } = await api('/api/agent/transition', { method: 'POST', body: JSON.stringify(req) }, { soft: true });
+  if (status !== 200 || !json?.ok) throw new ToolError(`AGENT_REJECTED:${json?.reason || 'bad_request'}`);
+  return json;
+}
 
 const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
@@ -819,61 +922,76 @@ const sendJson = (res, code, payload) => {
     .end(JSON.stringify(payload));
 };
 
-const httpServer = createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
-
-    if (url.pathname !== '/mcp') {
-      sendJson(res, 404, { error: 'Нет такого маршрута. MCP живёт на POST /mcp.' });
-      return;
-    }
-
-    // Поток от сервера к клиенту не нужен: ответы отдаём обычным JSON,
-    // поэтому GET и DELETE не поддерживаются осознанно.
-    if (req.method !== 'POST') {
-      res.writeHead(405, { Allow: 'POST', 'Content-Type': 'application/json; charset=utf-8' })
-        .end(JSON.stringify({ error: 'Метод не поддерживается: MCP работает через POST /mcp.' }));
-      return;
-    }
-
-    if (!originAllowed(req.headers.origin)) {
-      sendJson(res, 403, { error: 'Недопустимый Origin.' });
-      return;
-    }
-
-    if (!checkToken(req.headers.authorization)) {
-      res.writeHead(401, {
-        'WWW-Authenticate': 'Bearer',
-        'Content-Type': 'application/json; charset=utf-8',
-      }).end(JSON.stringify({ error: 'Неверный токен' }));
-      return;
-    }
-
-    let body;
+function createHttpServer() {
+  return createServer(async (req, res) => {
     try {
-      body = JSON.parse(await readBody(req) || '{}');
+      const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+
+      if (url.pathname !== '/mcp') {
+        sendJson(res, 404, { error: 'Нет такого маршрута. MCP живёт на POST /mcp.' });
+        return;
+      }
+
+      // Поток от сервера к клиенту не нужен: ответы отдаём обычным JSON,
+      // поэтому GET и DELETE не поддерживаются осознанно.
+      if (req.method !== 'POST') {
+        res.writeHead(405, { Allow: 'POST', 'Content-Type': 'application/json; charset=utf-8' })
+          .end(JSON.stringify({ error: 'Метод не поддерживается: MCP работает через POST /mcp.' }));
+        return;
+      }
+
+      if (!originAllowed(req.headers.origin)) {
+        sendJson(res, 403, { error: 'Недопустимый Origin.' });
+        return;
+      }
+
+      if (!checkToken(req.headers.authorization)) {
+        res.writeHead(401, {
+          'WWW-Authenticate': 'Bearer',
+          'Content-Type': 'application/json; charset=utf-8',
+        }).end(JSON.stringify({ error: 'Неверный токен' }));
+        return;
+      }
+
+      let body;
+      try {
+        body = JSON.parse(await readBody(req) || '{}');
+      } catch (err) {
+        sendJson(res, 400, { error: `Некорректный JSON: ${err.message}` });
+        return;
+      }
+
+      // Сервер без сессий: на каждый запрос свой транспорт, состояния между
+      // запросами нет — так проще и переживает перезапуск агента.
+      const server = buildServer();
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      res.on('close', () => { transport.close(); server.close(); });
+      await server.connect(transport);
+      await transport.handleRequest(req, res, body);
     } catch (err) {
-      sendJson(res, 400, { error: `Некорректный JSON: ${err.message}` });
-      return;
+      console.error('[mcp]', err);
+      if (res.headersSent) return;
+      sendJson(res, 500, { error: String(err.message || err) });
     }
+  });
+}
 
-    // Сервер без сессий: на каждый запрос свой транспорт, состояния между
-    // запросами нет — так проще и переживает перезапуск агента.
-    const server = buildServer();
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    res.on('close', () => { transport.close(); server.close(); });
-    await server.connect(transport);
-    await transport.handleRequest(req, res, body);
-  } catch (err) {
-    console.error('[mcp]', err);
-    if (res.headersSent) return;
-    sendJson(res, 500, { error: String(err.message || err) });
-  }
-});
+async function main() {
+  await loadSdk();
+  MCP_TOKEN = await loadMcpToken();
+  const httpServer = createHttpServer();
+  httpServer.listen(PORT, HOST, () => {
+    console.log(`TaskFlow MCP → http://${HOST}:${PORT}/mcp`);
+    console.log(`Основной сервер: ${API_BASE}`);
+    console.log(`Токен MCP: ${MCP_TOKEN}`);
+    console.log(`Подключение: claude mcp add --transport http taskflow http://${HOST}:${PORT}/mcp --header "Authorization: Bearer ${MCP_TOKEN}"`);
+  });
+}
 
-httpServer.listen(PORT, HOST, () => {
-  console.log(`TaskFlow MCP → http://${HOST}:${PORT}/mcp`);
-  console.log(`Основной сервер: ${API_BASE}`);
-  console.log(`Токен MCP: ${MCP_TOKEN}`);
-  console.log(`Подключение: claude mcp add --transport http taskflow http://${HOST}:${PORT}/mcp --header "Authorization: Bearer ${MCP_TOKEN}"`);
-});
+/** Только для тестов: подмена ожидаемого токена. */
+const setMcpTokenForTest = (t) => { MCP_TOKEN = t; };
+
+export { normalizeTask, TOOLS, findTask, checkToken, setMcpTokenForTest };
+
+// Сервер стартует только при запуске файла как программы, а не при импорте.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

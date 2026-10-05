@@ -4,3 +4,4 @@ node_modules/
 taskflow-*.json
 data/
 .claude/
+agent/spike/out*/

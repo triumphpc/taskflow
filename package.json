@@ -6,7 +6,8 @@
   "description": "Список задач: браузерное приложение, сервер синхронизации и MCP-сервер для агента",
   "scripts": {
     "start": "node serve.mjs",
-    "mcp": "node mcp.mjs"
+    "mcp": "node mcp.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0"

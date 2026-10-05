@@ -391,6 +391,38 @@ and the config from the HTTPS step above is two lines long.
 
 ---
 
+## Rolling out a release
+
+A release that touches the data format (such as agent delegation) is rolled out with a backup and a
+check that no task is lost. `scripts/deploy-check.mjs` has no dependencies; the real data file is only
+ever read by it, and tests use synthetic snapshots.
+
+1. **Backup, locally and on the VPS** (five latest copies are kept in `<data>/backups/`, mode 0600):
+
+   ```sh
+   node scripts/deploy-check.mjs backup ./data                      # locally
+   ssh vps 'cd /opt/taskflow && node scripts/deploy-check.mjs backup ./data'
+   ```
+
+   The command prints `{file,total,open,done,deleted}`. Keep the printed file name.
+2. Copy the code (`serve.mjs`, `sync.mjs`, `mcp.mjs`, `js/`, `index.html`, `styles.css`, `sw.js`, `scripts/`),
+   then restart `serve.mjs` and `mcp.mjs`.
+3. **Check** against the backup from step 1:
+
+   ```sh
+   node scripts/deploy-check.mjs counts ./data/taskflow.json
+   node scripts/deploy-check.mjs compare ./data/backups/<file>.json ./data/taskflow.json
+   node scripts/deploy-check.mjs check-snapshot ./data/backups/<file>.json   # the snapshot survives normalization
+   ```
+
+   `compare` exits 1 if an `id` from the backup is neither in `tasks` nor in `deleted`. **Any mismatch means
+   stop**: do not continue the rollout and do not let clients sync.
+4. **Rollback:** take a fresh `backup` first (it is the source of truth for what happened after the rollout),
+   then put the previous code back and restart. The old code does not delete the unknown `agent` field until a
+   record from an old client arrives (the server merges by block, so it is kept even then); if the data looks
+   wrong, restore from the backup taken in step 1.
+5. Daemon on the Mac: install by hand following `agent/README.md`.
+
 ## Installing as an app
 
 Requires HTTPS (or `http://localhost`).

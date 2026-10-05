@@ -5,6 +5,7 @@ import {
   uid, todayStr, addDaysStr, nextMondayStr, datePart, timePart, combineDue,
   isAllDay, parseDue, isOverdue, fromDateStr, toDateStr, nextOccurrence,
 } from './core.js';
+import { isDelegable, delegateBlock, clearBlock, reconcileAgent } from './agent.js';
 
 export const PRIORITIES = {
   1: { id: 1, code: 'P1', name: 'Срочно и важно', hint: 'сделать сейчас', varName: '--p1' },
@@ -31,6 +32,15 @@ export function repeatLabel(repeat) {
 // Тип пересчитываем на каждой правке — иначе «убрал дату» оставило бы запись
 // задачей без даты, то есть в разделе, которого больше нет.
 const touch = (t) => { t.updatedAt = Date.now(); t.kind = deriveKind(t); };
+
+/**
+ * Единственная точка сброса блока делегирования при действии пользователя:
+ * решение принимает reconcileAgent (M1), здесь только подстановка события.
+ */
+function reconcile(t, ev) {
+  const block = reconcileAgent(t, ev, { today: todayStr(), now: Date.now() });
+  if (block) t.agent = block;
+}
 
 // ---------- CRUD ----------
 
@@ -60,8 +70,28 @@ export function updateTask(id, patch) {
   // Повтор без даты бессмыслен — снимаем его.
   if (t.repeat && !t.due) t.repeat = null;
   if (t.repeat && !t.repeat.anchor) t.repeat.anchor = datePart(t.due);
+  // Перенос срока в будущее или снятие срока снимает делегирование (agentNotes остаются).
+  if ('due' in patch) reconcile(t, 'due_change');
   touch(t);
   commit('task:update');
+  return t;
+}
+
+/**
+ * Галка «Делегировать агенту». on=true — только для задачи из «Сегодня» без статуса;
+ * on=false снимает любой статус, в том числе in_progress. null — нечего менять.
+ */
+export function setDelegation(id, on) {
+  const t = getTask(id);
+  if (!t) return null;
+  if (on) {
+    if (t.agent?.status || !isDelegable(t, todayStr())) return null;
+    t.agent = delegateBlock(t.agent, Date.now());
+  } else {
+    if (!t.agent?.status) return t;
+    t.agent = clearBlock(t.agent, Date.now());
+  }
+  commit('task:delegation');
   return t;
 }
 
@@ -99,6 +129,7 @@ export function toggleDone(id) {
   if (t.done) {
     t.done = false;
     t.completedAt = null;
+    reconcile(t, 'reopen');
     touch(t);
     commit('task:undone');
     return { kind: 'undone', task: t };
@@ -111,6 +142,8 @@ export function toggleDone(id) {
     t.due = combineDue(nextDate, t.repeat.time || timePart(t.due));
     t.subtasks = t.subtasks.map((s) => ({ ...s, done: false }));
     t.notifiedFor = null;
+    // Серия идёт дальше: делегирование возвращается в «Делегирована», прошлые заметки остаются.
+    reconcile(t, 'repeat');
     touch(t);
     commit('task:rescheduled');
     return { kind: 'rescheduled', task: t, nextDue: t.due };
@@ -118,6 +151,7 @@ export function toggleDone(id) {
 
   t.done = true;
   t.completedAt = Date.now();
+  reconcile(t, 'close');
   touch(t);
   commit('task:done');
   return { kind: 'done', task: t };
