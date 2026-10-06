@@ -92,10 +92,33 @@ export function describeCall(toolName, toolInput) {
 // GitLab quick actions (/merge, /approve, /close ...) исполняются сервером из текста комментария, VK Teams
 // трактует ведущий «/» как команду бота (SEC01, SEC08). Консервативно: любая строка, начинающаяся с «/»
 // и буквы или «_» (для VK: с любого «/»), без исключений для блоков кода.
-const QUICK_ACTION = /^[\s\p{Cc}\p{Cf}]*\/[a-z_]/miu;
-const VK_COMMAND = /^[\s\p{Cc}\p{Cf}]*\//mu;
+// Проверка построчно (SEC14): класс с \s внутри многострочного ^ давал квадратичное время на «\n»×N. Здесь
+// строка не содержит переводов строк, регэксп якорный и без m, значит разбор линеен по длине тела.
+const LINE_BREAK = /\r\n|[\n\r\u2028\u2029]/;
+const QUICK_ACTION_LINE = /^[\s\p{Cc}\p{Cf}]*\/[a-z_]/iu;
+const VK_COMMAND_LINE = /^[\s\p{Cc}\p{Cf}]*\//u;
+const anyLine = (text, re) => text.split(LINE_BREAK).some((line) => re.test(line));
+const QUICK_ACTION = { test: (text) => anyLine(text, QUICK_ACTION_LINE) };
+const VK_COMMAND = { test: (text) => anyLine(text, VK_COMMAND_LINE) };
 // Макросы Confluence, исполняющие произвольный HTML или подтягивающие чужое содержимое (SEC08).
-const DANGEROUS_MACRO = /<ac:structured-macro\b[^>]*\b(?:ac:)?name\s*=\s*(["'])\s*(?:html|iframe|include|html-include)\s*\1/i;
+// Тег режется до ближайшего «>» и проверяется один раз; следующий поиск идёт после него, поэтому
+// 40000 незакрытых «<ac:structured-macro » не дают квадрата (атрибуты вложенных начал уже внутри среза).
+const MACRO_START = /<ac:structured-macro\b/gi;
+const MACRO_TAG = /^<ac:structured-macro\b[^>]*\b(?:ac:)?name\s*=\s*(["'])\s*(?:html|iframe|include|html-include)\s*\1/i;
+const DANGEROUS_MACRO = {
+  test: (text) => {
+    MACRO_START.lastIndex = 0;
+    let m;
+    while ((m = MACRO_START.exec(text)) !== null) {
+      const end = text.indexOf('>', m.index);
+      const tag = end === -1 ? text.slice(m.index) : text.slice(m.index, end);
+      if (MACRO_TAG.test(tag)) return true;
+      if (end === -1) return false;
+      MACRO_START.lastIndex = end;
+    }
+    return false;
+  },
+};
 
 /**
  * Запрещённое содержимое тела. Чистая функция; ошибка разбора даёт null.

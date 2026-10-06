@@ -102,3 +102,14 @@ test('run-dir: [send] I05/CR-I04 meta keeps claimedAt and never the claimToken; 
     assert.equal(findLatestRunDir({ stateDir: s, taskId: 'b', now, claimedAt: 5 }), null);
   } finally { await rm(s, { recursive: true, force: true }); }
 });
+
+test('run-dir: [send] SEC15 findLatestRunDir with claimedAt: null never matches a meta whose claimedAt is null', async () => {
+  const s = await tmp();
+  const now = 10 * RUN_KEEP_MS;
+  try {
+    createRunDir({ stateDir: s, taskId: 'a', due: '1', now: now - 1000, claim: { claimToken: 't', claimedAt: null } });
+    const meta = JSON.parse(await readFile(join(findLatestRunDir({ stateDir: s, taskId: 'a', now }).dir, 'meta.json'), 'utf8'));
+    assert.equal(meta.claimedAt, null);
+    assert.equal(findLatestRunDir({ stateDir: s, taskId: 'a', now, claimedAt: null }), null);
+  } finally { await rm(s, { recursive: true, force: true }); }
+});
