@@ -6,9 +6,9 @@ import { readFile } from 'node:fs/promises';
 
 const read = (rel) => readFile(new URL(rel, import.meta.url), 'utf8');
 
-test('ui static: sw.js has cache taskflow-v17 and ./js/agent.js in the shell (C13, AC-026)', async () => {
+test('ui static: sw.js has cache taskflow-v18 and ./js/agent.js in the shell (C13, AC-026)', async () => {
   const sw = await read('../sw.js');
-  assert.match(sw, /const CACHE = 'taskflow-v17';/);
+  assert.match(sw, /const CACHE = 'taskflow-v18';/);
   assert.ok(sw.includes("'./js/agent.js'"));
 });
 
@@ -114,12 +114,13 @@ test('ui static: --ball-none is defined in every theme block that defines --p1..
   const withNone = (css.match(/--ball-none:/g) ?? []).length;
   assert.equal(withP4, 4);
   assert.equal(withNone, withP4);
-  for (const sel of ['.intro', '.ball', '.ball-num', '.intro-rack']) assert.ok(css.includes(`${sel} {`), sel);
+  for (const sel of ['.intro', '.ball', '.ball-num', '.intro-rack', '.intro-greeting', '.intro .rail', '.rail', '.rail-more', '.moments-ball', '.moments-ghost', '.overlay-rail']) assert.ok(css.includes(`${sel} {`), sel);
+  assert.match(css, /\.ball\.no-num \.ball-num \{[^}]*display: none/);
   assert.match(css, /\.intro \{[^}]*z-index: 70/);
   assert.match(css, /\.ball-num \{[^}]*background: #fff/);
 });
 
-test('ui static: moments-intro reads matchMedia per call, skips on click and capture keydown, builds numbers via textContent (AC-016 AC-017 AC-020)', async () => {
+test('ui static: moments-intro reads matchMedia per call, skips on click and capture keydown, builds texts via textContent (AC-003 AC-004 AC-008)', async () => {
   const src = await read('../js/moments-intro.js');
   const fn = src.slice(src.indexOf('export function introAllowed'), src.indexOf('export function playIntro'));
   assert.match(fn, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)/);
@@ -133,34 +134,57 @@ test('ui static: moments-intro reads matchMedia per call, skips on click and cap
   assert.match(src, /e\.preventDefault\(\)/);
   assert.match(src, /e\.stopPropagation\(\)/);
   assert.match(src, /e\.repeat/);
-  assert.match(src, /\.textContent = String\(b\.n\)/);
+  const rail = await read('../js/moments-rail.js');
+  assert.match(rail, /\.textContent = String\(n\)/);
   assert.doesNotMatch(src, /\.title|innerHTML|html:/);
   assert.doesNotMatch(src, /model\.js|store\.js/);
   assert.match(src, /if \(current\) return current/);
   assert.match(src, /if \(finished\) return/);
   assert.match(src, /setTimeout\(\(\) => finish\('done'\), intro\.total\)/);
+  assert.match(src, /import \{ buildIntro \} from '\.\/intro-scene\.js'/);
+  assert.doesNotMatch(src, /from '\.\/pyramid\.js'/);
+  assert.match(src, /\.textContent = greeting\.date/);
+  assert.match(src, /\.textContent = greeting\.count/);
+  assert.match(src, /railTop: probe\.getBoundingClientRect\(\)\.top/);
 });
 
-test('ui static: sw.js is taskflow-v17 and the shell lists pyramid.js and moments-intro.js, which exist (AC-023)', async () => {
+test('ui static: sw.js is taskflow-v18 and the shell lists the Moments modules, which exist (AC-033)', async () => {
   const sw = await read('../sw.js');
-  assert.match(sw, /const CACHE = 'taskflow-v17';/);
-  assert.doesNotMatch(sw, /taskflow-v16/);
-  for (const f of ['./js/pyramid.js', './js/moments-intro.js']) {
+  assert.match(sw, /const CACHE = 'taskflow-v18';/);
+  assert.doesNotMatch(sw, /taskflow-v17/);
+  for (const f of ['./js/pyramid.js', './js/moments-intro.js', './js/moments-flow.js', './js/rail.js', './js/intro-scene.js', './js/moments-rail.js']) {
     assert.ok(sw.includes(`'${f}'`), f);
     assert.ok((await read(f.replace('./', '../'))).length > 100, `${f} exists`);
   }
 });
 
-test('ui static: openMoments counts the queue once, branches empty / reduced / animated, guards with busy (AC-014 AC-018 AC-020)', async () => {
+test('ui static: openMoments counts the queue and the date once, branches empty / static / animated, guards with active (AC-010 AC-011 AC-012 AC-029)', async () => {
   const src = await read('../js/moments.js');
   const start = src.indexOf('export function openMoments');
   const body = src.slice(start, src.indexOf('function openEmpty'));
-  assert.match(src, /let busy = false/);
-  assert.match(body, /if \(busy\) return/);
+  assert.match(src, /let active = false/);
+  assert.doesNotMatch(src, /\bbusy\b/);
+  assert.match(body, /^[^\n]*\n\s*if \(active\) return/);
   assert.equal((src.match(/momentsCandidates\(/g) ?? []).length, 1);
+  assert.equal((src.match(/new Date\(\)/g) ?? []).length, 1);
   assert.ok(body.indexOf('openEmpty()') < body.indexOf('introAllowed()'), 'empty queue is handled before the animation');
-  assert.match(body, /if \(!introAllowed\(\)\) return openQueue\(queue\)/);
-  assert.match(body, /playIntro\(queue\)\.finally\(\(\) => \{ busy = false; openQueue\(queue\); \}\)/);
+  assert.ok(body.indexOf('openEmpty()') < body.indexOf('active = true'), 'an empty queue does not take the session');
+  assert.match(body, /if \(!introAllowed\(\)\) \{[^\n]*\n\s*try \{ return openQueue\(queue, \{ entry: 'static', title \}\); \} catch \(e\) \{ release\(\); throw e; \}/);
+  assert.match(body, /const release = \(\) => \{ if \(!opened\) active = false; \}/);
+  assert.match(body, /playIntro\(queue, greeting\)\s*\.then\(\(reason\) => openQueue\(queue, \{ entry: reason, title \}\)\)\s*\.catch\(release\)/);
+  assert.doesNotMatch(src, /\.finally\(/);
   assert.match(src, /import \{ introAllowed, playIntro \} from '\.\/moments-intro\.js'/);
-  assert.match(src, /onClose: \(\) => ctx\.refresh\(\)/);
+  assert.match(src, /import \{[^}]*sheetTitle[^}]*\} from '\.\/moments-flow\.js'/);
+  assert.match(src, /import \{[^}]*greetingParts[^}]*\} from '\.\/moments-flow\.js'/);
+});
+
+test('ui static: openQueue closes in onClose with active reset and a refresh (AC-010 AC-027)', async () => {
+  const src = await read('../js/moments.js');
+  const i = src.indexOf('function onClose()');
+  assert.ok(i > 0, 'onClose is a named function');
+  const onClose = src.slice(i, src.indexOf('\n  }\n', i));
+  assert.match(onClose, /gate\.close\(\)/);
+  assert.match(onClose, /active = false/);
+  assert.match(onClose, /ctx\.refresh\(\)/);
+  assert.match(src, /onClose,/);
 });

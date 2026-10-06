@@ -29,8 +29,8 @@ export function toast(message, { action, actionLabel, error = false, ms = 4000 }
 
 let openSheets = 0;
 
-export function openSheet({ title, bodyNodes, footNodes, onClose, wide = false }) {
-  const overlay = h('div', { class: 'overlay' });
+export function openSheet({ title, bodyNodes, footNodes, onClose, wide = false, overlayClass = '' }) {
+  const overlay = h('div', { class: overlayClass ? `overlay ${overlayClass}` : 'overlay' });
   const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title || '' });
 
   const close = () => {
