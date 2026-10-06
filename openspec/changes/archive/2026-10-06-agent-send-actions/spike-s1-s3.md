@@ -5,28 +5,27 @@
 
 ## Вердикты
 
-S1: FAIL
+S1: PASS
 S2: PASS
 S3: PASS
 
 Строки выше пользователь заменяет на `PASS` или `FAIL` после ручного прогона. Скрипты пишут только `S1-proposed:`,
 `S2-proposed:`, `S3-proposed:` в блоках фактов ниже. `test/spike-send-harness.test.mjs` проверяет формат заметки и не требует PASS.
 
-### Итог прогона 2026-10-06
+### Итог прогонов 2026-10-06
 
-- **S1: FAIL по букве критерия, основная защита подтверждена.** Прошли (а), (б), (в), (ж), (з), (л): хук работает под launchd и в субагенте,
-  allow от хука открывает инструмент, без хука, при зависании и при коде 1 вызов отклонён, субагент и skill с send-инструментом при упавшем хуке
-  отклонены. Не прошли:
-  - (к) deny-префикс `mcp__plugin_` в Claude Code не действует: allow-правило `mcp__plugin_x_y` в settings открыло инструмент плагина.
-    В боевом запуске это закрывает preflight: любое allow-правило с `mcp__plugin_` даёт `config_error` и демон не стартует
-    (проверено на временном HOME, `allow_plugin_tool`). Доработка: deny конкретных имён плагинных серверов или `--strict-mcp-config`.
-  - (м) прогон не состоялся: с временным `CLAUDE_CONFIG_DIR` claude не находит агента `ai-space-assistant` (агенты лежат в `~/.claude/agents`)
-    и выходит с кодом 1 до вызова. Ошибка harness, не gate. В env демона `CLAUDE_CONFIG_DIR` не задан. Доработка: симлинк агентов в
-    временный каталог в `run-s1.sh`.
-- **S2: PASS.** t1..t3: 3–5 ходов, 0.16–0.17 USD, лимиты 50/3.00 с запасом. `Agent(<имя>)` принимается, но другие имена не отклоняет,
-  поэтому `NARROW_AGENT` остаётся `false`.
+- **S1: PASS (повторный прогон после правки strict MCP).** Первый прогон дал FAIL по (к) и (м):
+  deny-префикс `mcp__plugin_` в Claude Code не действует, а прогон (м) не нашёл агента во временном `CLAUDE_CONFIG_DIR`.
+  Исправлено: в режиме отправки claude запускается с `--strict-mcp-config --mcp-config <runDir>/mcp.json`, где только
+  `mcp-workspace-assistant`, `mcp-jira`, `mcp-confluence`, `generic:gitlab`; плагины, коннекторы claude.ai, telegram, yadisk
+  и прочие серверы не загружаются вовсе. В (м) во временный каталог кладутся симлинки на `~/.claude/agents` и `skills`.
+  Повторный прогон: все пункты (а)–(м) выполнены, в (к) init содержит ровно четыре сервера и ноль чужих инструментов
+  при allow-правилах на плагины, Gmail, yadisk и telegram в settings.
+- **S2: PASS.** t1..t3: 3–5 ходов, 0.16–0.17 USD, лимиты 50/3.00 с запасом. `Agent(<имя>)` принимается, но другие имена не
+  отклоняет, поэтому `NARROW_AGENT` остаётся `false`.
 - **S3: PASS.** Вызов send дошёл до заглушки, хук сработал, превью не мешает.
-- Живая проверка того же дня: делегированная задача отправила сообщение боту из белого списка, журнал в карточке совпал.
+- Живая проверка: делегированная задача отправила сообщение боту из белого списка, журнал в карточке совпал. Пробный запуск
+  со strict-конфигом на реальных серверах (только чтение): все четыре `connected`, включая OAuth `mcp-workspace-assistant`.
 
 ## Как запустить (пользователь, из корня worktree)
 
@@ -52,12 +51,12 @@ SPIKE_OUT="$HOME/Library/Logs/taskflow-spike-send" sh agent/spike/send/run-s3.sh
 - (е) Вид `project_id` (число или путь `group/project`) и вид `chat_sn`: ___
 - (ж) Хук pre спит дольше своего timeout: вызов отклонён, заглушка не тронута (прогон f, SEC02): ___
 - (з) Хук pre завершается кодом 1: вызов отклонён, заглушка не тронута (прогон g, SEC02): ___
-- (к) Плагинный MCP `plugin_x_y` с allow-правилом `mcp__plugin_x_y` в settings и deny `mcp__plugin_` в `--disallowedTools`: вызов отклонён, заглушка не тронута (прогон k, SEC13): ___
+- (к) Режим отправки собран продакшн-сборщиком (`buildClaudeArgs`, `--strict-mcp-config` + заглушки с теми же четырьмя ключами, включая `generic:gitlab`); в settings allow-правила на `mcp__plugin_x_y`, реальные плагины пользователя (например `productivity:slack`) и коннекторы (`claude_ai_*`, `yadisk`, `telegram`) как эмуляция; вывод stream-json. В init `mcp_servers` нет записей `plugin:*` / `plugin_*`, в `tools` нет `mcp__plugin_*`, `mcp__claude_ai_*`, `mcp__yadisk*`, `mcp__telegram*` (прогон k, SEC13): ___
 - (л) Субагент и skill с send-инструментом в `tools` / `allowed-tools` при падающем хуке (exit 1): вызов отклонён, заглушка не тронута (прогон l, SEC12): ___
-- (м) `CLAUDE_CONFIG_DIR` с allow-правилом на send-инструмент при падающем хуке: вызов отклонён, заглушка не тронута (прогон m, SEC12): ___
+- (м) Временный `CLAUDE_CONFIG_DIR` (в нём только симлинки на `~/.claude/agents` и `~/.claude/skills`, чтобы `--agent ai-space-assistant` находился) с allow-правилом на send-инструмент при падающем хуке: вызов отклонён, заглушка не тронута (прогон m, SEC12): ___
 
 <!-- S1-facts:begin -->
-S1-proposed: FAIL  (прогон 2026-10-06; вердикт S1: вносит пользователь)
+S1-proposed: PASS  (прогон 2026-10-06; вердикт S1: вносит пользователь)
 
 ```json
 {
@@ -68,9 +67,21 @@ S1-proposed: FAIL  (прогон 2026-10-06; вердикт S1: вносит п�
   "c_denied_without_hook": true,
   "f_denied_hook_sleeps": true,
   "g_denied_hook_exit1": true,
-  "k_plugin_allow_denied": false,
+  "k_strict_mcp_no_foreign": true,
+  "k_init": {
+    "init_seen": true,
+    "servers": [
+      "mcp-workspace-assistant",
+      "mcp-jira",
+      "mcp-confluence",
+      "generic:gitlab"
+    ],
+    "foreign_servers": [],
+    "foreign_tool_count": 0,
+    "unexpected_servers": []
+  },
   "l_sender_agent_hook_fail_denied": true,
-  "m_config_dir_allow_hook_fail_denied": false,
+  "m_config_dir_allow_hook_fail_denied": true,
   "g_pre_fields": [
     "agent_type",
     "cwd",
@@ -169,7 +180,7 @@ S1-proposed: FAIL  (прогон 2026-10-06; вердикт S1: вносит п�
     "e": 1,
     "f": 0,
     "g": 0,
-    "k": 1,
+    "k": 0,
     "l": 0,
     "m": 0
   },

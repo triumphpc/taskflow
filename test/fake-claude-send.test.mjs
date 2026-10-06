@@ -23,7 +23,7 @@ async function setup(policy = { vk_chats: ['chat-ok'] }) {
   await chmod(policyPath, 0o600);
   const mcpOut = join(root, 'mcp-calls.jsonl');
   const run = (plan, extraEnv = {}, gate = { nodePath: process.execPath, gatePath: GATE, runDir, policyPath }) => {
-    const args = buildClaudeArgs({ send: true, gate });
+    const args = buildClaudeArgs({ send: true, gate, mcpConfigPath: join(root, 'mcp.json') });
     const r = spawnSync(process.execPath, [FAKE, ...args], {
       input: 'prompt', encoding: 'utf8',
       env: { PATH: process.env.PATH, FAKE_CLAUDE_MODE: 'send', FAKE_CLAUDE_SEND_PLAN: JSON.stringify(plan), FAKE_CLAUDE_MCP_OUT: mcpOut, ...extraEnv },

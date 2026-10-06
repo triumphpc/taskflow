@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { extractRef } from '../../lib/audit.mjs';
 import { SEND_TOOLS } from '../../lib/policy.mjs';
+import { SEND_MCP_SERVERS } from '../../lib/mcp-config.mjs';
 
 const lines = (file) => {
   try { return readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; }
@@ -24,9 +25,33 @@ const run = (dir, name) => ({
 });
 const isVk = (c) => c.tool === 'messenger-send-message';
 
+/** (к): чужие серверы и инструменты, которых при --strict-mcp-config быть не должно (плагины, коннекторы claude.ai, yadisk, telegram). */
+const FOREIGN_SERVER = /^(plugin[:_]|claude[._\s-]?ai|yadisk|telegram)/i;
+const FOREIGN_TOOL = /^mcp__(plugin_|claude_ai_|yadisk|telegram)/;
+
+/** Разбор прогона k: stream-json, init с mcp_servers и tools. Значения не читаются, только имена. */
+export function evaluateK(file) {
+  const { init } = stream(file);
+  const servers = (init?.mcp_servers || []).map((m) => String(m.name));
+  const tools = (init?.tools || []).map(String);
+  const foreignServers = servers.filter((n) => FOREIGN_SERVER.test(n));
+  const foreignTools = tools.filter((t) => FOREIGN_TOOL.test(t));
+  const norm = (n) => n.replace(/[^A-Za-z0-9_-]/g, '_');
+  const expected = new Set(SEND_MCP_SERVERS.map(norm));
+  return {
+    init_seen: Boolean(init),
+    servers,
+    foreign_servers: foreignServers,
+    foreign_tools: foreignTools,
+    unexpected_servers: servers.filter((n) => !expected.has(norm(n))),
+    ok: Boolean(init) && foreignServers.length === 0 && foreignTools.length === 0,
+  };
+}
+
 export function evaluateS1(dir) {
   const a = run(dir, 'a'); const b = run(dir, 'b'); const c = run(dir, 'c'); const d = run(dir, 'd'); const e = run(dir, 'e');
   const f = run(dir, 'f'); const g = run(dir, 'g'); const k = run(dir, 'k'); const l = run(dir, 'l'); const m = run(dir, 'm');
+  const kInit = evaluateK(k.out);
   const ran = (r) => { try { return statSync(r.out).size > 0 && r.code !== null; } catch { return false; } };
   const facts = {
     a_hook_in_main: a.pre.length > 0,
@@ -36,7 +61,8 @@ export function evaluateS1(dir) {
     c_denied_without_hook: c.calls.length === 0 && c.code !== null,
     f_denied_hook_sleeps: f.calls.length === 0 && f.code !== null,
     g_denied_hook_exit1: g.calls.length === 0 && g.code !== null,
-    k_plugin_allow_denied: k.calls.length === 0 && ran(k),
+    k_strict_mcp_no_foreign: k.calls.length === 0 && ran(k) && kInit.ok,
+    k_init: { init_seen: kInit.init_seen, servers: kInit.servers, foreign_servers: kInit.foreign_servers, foreign_tool_count: kInit.foreign_tools.length, unexpected_servers: kInit.unexpected_servers },
     l_sender_agent_hook_fail_denied: l.calls.length === 0 && ran(l),
     m_config_dir_allow_hook_fail_denied: m.calls.length === 0 && ran(m),
     g_pre_fields: a.pre[0] ? Object.keys(a.pre[0]).sort() : [],
@@ -51,7 +77,7 @@ export function evaluateS1(dir) {
   };
   const pass = facts.a_hook_in_main && facts.a_hook_in_subagent && facts.b_allow_opened_tool && facts.c_denied_without_hook
     && facts.f_denied_hook_sleeps && facts.g_denied_hook_exit1
-    && facts.k_plugin_allow_denied && facts.l_sender_agent_hook_fail_denied && facts.m_config_dir_allow_hook_fail_denied;
+    && facts.k_strict_mcp_no_foreign && facts.l_sender_agent_hook_fail_denied && facts.m_config_dir_allow_hook_fail_denied;
   return { name: 'S1', facts, proposed: pass ? 'PASS' : 'FAIL' };
 }
 

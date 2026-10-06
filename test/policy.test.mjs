@@ -10,6 +10,7 @@ import { SYSTEM_PROMPT, SYSTEM_PROMPT_SEND } from '../agent/lib/prompt.mjs';
 
 // Эталон режима «только чтение», снятый до change agent-send-actions.
 const BASE = JSON.parse(readFileSync(new URL('./fixtures/readonly-baseline.json', import.meta.url), 'utf8'));
+const MCP_PATH = '/state/runs/t1-1/mcp.json';
 const GATE = { nodePath: '/usr/bin/node', gatePath: '/repo/agent/hooks/send-gate.mjs', runDir: '/state/runs/t1-1', policyPath: '/cfg/send-policy.json' };
 
 const toolPart = (n) => n.split('__').slice(2).join('__');
@@ -175,7 +176,7 @@ test('policy: [send] AC-009 deny keeps mail, calendar, chat creation, members, r
 });
 
 test('policy: [send] AC-021: send argv is dontAsk with explicit lists, LIMITS_SEND and --settings, no bypass in any mode (C2)', () => {
-  const a = buildClaudeArgs({ send: true, gate: GATE });
+  const a = buildClaudeArgs({ send: true, gate: GATE, mcpConfigPath: MCP_PATH });
   assert.equal(a[a.indexOf('--permission-mode') + 1], 'dontAsk');
   assert.equal(a.filter((x) => x === '--permission-mode').length, 1);
   assert.equal(a[a.indexOf('--allowedTools') + 1], ALLOWED_TOOLS.join(','));
@@ -186,7 +187,7 @@ test('policy: [send] AC-021: send argv is dontAsk with explicit lists, LIMITS_SE
   assert.equal(a[a.indexOf('--append-system-prompt') + 1], SYSTEM_PROMPT_SEND);
   assert.deepEqual(JSON.parse(a[a.indexOf('--settings') + 1]), buildGateSettings(GATE));
   assert.deepEqual(a.slice(0, 2), ['--agent', 'ai-space-assistant']);
-  for (const argv of [a, buildClaudeArgs(), buildFallbackInvocation({ send: true, gate: GATE }).args, buildFallbackInvocation().args]) {
+  for (const argv of [a, buildClaudeArgs(), buildFallbackInvocation({ send: true, gate: GATE, mcpConfigPath: MCP_PATH }).args, buildFallbackInvocation().args]) {
     const joined = argv.join('\n');
     for (const bad of ['bypassPermissions', '--dangerously-skip-permissions', 'acceptEdits']) assert.ok(!joined.includes(bad), bad);
     assert.ok(!argv.includes('auto'));
@@ -197,6 +198,8 @@ test('policy: [send] AC-021: send argv is dontAsk with explicit lists, LIMITS_SE
 
 test('policy: send:true without a gate throws TypeError (M1 error mode)', () => {
   assert.throws(() => buildClaudeArgs({ send: true }), TypeError);
+  assert.throws(() => buildClaudeArgs({ send: true, gate: GATE }), TypeError, 'send mode without mcpConfigPath: fail-closed');
+  assert.throws(() => buildClaudeArgs({ send: true, gate: GATE, mcpConfigPath: '' }), TypeError);
   assert.throws(() => buildClaudeArgs({ send: true, gate: { nodePath: 'n' } }), TypeError);
   assert.throws(() => buildFallbackInvocation({ send: true }), TypeError);
 });
@@ -239,7 +242,7 @@ test('policy: gate paths with quotes and spaces are shell-quoted', () => {
 });
 
 test('policy: the fallback invocation carries the settings JSON quoted', () => {
-  const f = buildFallbackInvocation({ send: true, gate: GATE });
+  const f = buildFallbackInvocation({ send: true, gate: GATE, mcpConfigPath: MCP_PATH });
   assert.equal(f.command, 'zsh');
   assert.match(f.args[1], /'--settings' '\{"hooks":/);
   assert.match(f.args[1], /'--max-turns' '50'/);

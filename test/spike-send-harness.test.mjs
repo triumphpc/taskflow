@@ -10,8 +10,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SEND_TOOLS, CONVERTER_TOOL, SUBAGENTS } from '../agent/lib/policy.mjs';
 import { STUB_TOOLS, SERVERS, toolsFor, recordCall, readCalls, serverOf, toolOf } from '../agent/spike/send/stub-mcp.mjs';
-import { buildLaunch } from '../agent/spike/send/launch-claude.mjs';
-import { evaluateS1, evaluateS2, evaluateS3, renderFacts } from '../agent/spike/send/evaluate-send.mjs';
+import { buildLaunch, FOREIGN_ALLOW, normalizeServer } from '../agent/spike/send/launch-claude.mjs';
+import { SEND_MCP_SERVERS } from '../agent/lib/mcp-config.mjs';
+import { evaluateS1, evaluateS2, evaluateS3, evaluateK, renderFacts } from '../agent/spike/send/evaluate-send.mjs';
 import { hasMcpSdk } from './helpers/serve.mjs';
 
 const D = (f) => fileURLToPath(new URL(`../agent/spike/send/${f}`, import.meta.url));
@@ -73,16 +74,23 @@ test('spike harness: the stub speaks MCP over stdio and records tools/call', { s
   } finally { child.kill('SIGKILL'); await rm(d, { recursive: true, force: true }); }
 });
 
-test('spike harness: launch-claude variants for S1 (k), (l), (m): plugin stub with allow, sender agent/skill, CLAUDE_CONFIG_DIR', async () => {
+test('spike harness: launch-claude variants for S1 (k), (l), (m): foreign allow rules over a strict stub config, sender agent/skill, CLAUDE_CONFIG_DIR', async () => {
   const d = await tmp();
   try {
     const base = { work: join(d, 'w'), node: '/usr/bin/node', calls: join(d, 'c.jsonl'), policyPath: join(d, 'p.json') };
     await mkdir(base.work, { recursive: true });
-    const k = buildLaunch({ ...base, plugin: true });
+    const k = buildLaunch({ ...base, plugin: true, format: 'stream-json' });
     const ks = JSON.parse(k.args[k.args.indexOf('--settings') + 1]);
-    assert.ok(ks.permissions.allow.includes('mcp__plugin_x_y'));
-    assert.ok(k.args[k.args.indexOf('--disallowedTools') + 1].split(',').includes('mcp__plugin_'));
-    assert.ok('plugin_x_y' in JSON.parse(await readFile(join(base.work, 'mcp.json'), 'utf8')).mcpServers);
+    for (const rule of FOREIGN_ALLOW) assert.ok(ks.permissions.allow.includes(rule), rule);
+    assert.ok(FOREIGN_ALLOW.includes('mcp__plugin_x_y'));
+    assert.ok(k.args[k.args.indexOf('--disallowedTools') + 1].split(',').includes('mcp__plugin_'), 'the deny prefix stays as defense in depth');
+    assert.equal(k.args[k.args.indexOf('--output-format') + 1], 'stream-json');
+    assert.ok(k.args.includes('--verbose'));
+    // the plugin is NOT put into --mcp-config any more: only the four production keys
+    const mcpK = JSON.parse(await readFile(join(base.work, 'mcp.json'), 'utf8')).mcpServers;
+    assert.ok(!('plugin_x_y' in mcpK) && !JSON.stringify(mcpK).includes('plugin'));
+    assert.deepEqual(Object.keys(mcpK), [...SEND_MCP_SERVERS]);
+    assert.ok(k.args.includes('--strict-mcp-config'));
     assert.deepEqual(k.env, {});
     const l = buildLaunch({ ...base, senderAgent: true, hookFault: 'fail' });
     assert.match(await readFile(join(base.work, '.claude', 'agents', 'spike-sender.md'), 'utf8'), /tools: mcp__mcp-workspace-assistant__messenger-send-message/);
@@ -91,9 +99,16 @@ test('spike harness: launch-claude variants for S1 (k), (l), (m): plugin stub wi
     const m = buildLaunch({ ...base, configDirAllow: true, hookFault: 'fail' });
     assert.equal(m.env.CLAUDE_CONFIG_DIR, join(base.work, 'cfg'));
     assert.deepEqual(JSON.parse(await readFile(join(base.work, 'cfg', 'settings.json'), 'utf8')).permissions.allow, [SEND_TOOLS[0]]);
+    // (m) with a ready directory (run-s1.sh puts symlinks to agents/skills there): settings.json goes into it
+    const ready = join(d, 'cfg-m');
+    await mkdir(ready);
+    const m2 = buildLaunch({ ...base, configDirAllow: true, cfgDir: ready, hookFault: 'fail' });
+    assert.equal(m2.env.CLAUDE_CONFIG_DIR, ready);
+    assert.deepEqual(JSON.parse(await readFile(join(ready, 'settings.json'), 'utf8')).permissions.allow, [SEND_TOOLS[0]]);
     const plain = buildLaunch({ ...base });
     assert.deepEqual(plain.env, {});
-    assert.ok(!('plugin_x_y' in JSON.parse(await readFile(join(base.work, 'mcp.json'), 'utf8')).mcpServers));
+    const ps = JSON.parse(plain.args[plain.args.indexOf('--settings') + 1]);
+    assert.equal(ps.permissions, undefined, 'without the k variant there are no allow rules');
   } finally { await rm(d, { recursive: true, force: true }); }
 });
 
@@ -111,8 +126,16 @@ test('spike harness: launch-claude builds the daemon argv with stub-only MCP; va
       assert.ok(settings.hooks[ev][0].hooks[1].command.includes('dump-hook.mjs'));
     }
     const mcp = JSON.parse(await readFile(join(base.work, 'mcp.json'), 'utf8'));
-    assert.deepEqual(Object.keys(mcp.mcpServers).sort(), [...SERVERS].sort());
+    // the keys are the production allowlist verbatim ('generic:gitlab' is not renamed); the stub itself serves the normalized name
+    assert.deepEqual(Object.keys(mcp.mcpServers), [...SEND_MCP_SERVERS]);
+    assert.deepEqual(Object.keys(mcp.mcpServers).map(normalizeServer).sort(), [...SERVERS].sort());
+    assert.equal(mcp.mcpServers['generic:gitlab'].args.at(-1), 'generic_gitlab');
     assert.ok(Object.values(mcp.mcpServers).every((s) => s.env.STUB_CALLS === base.calls));
+    // built by the production builder: exactly one pair of flags, the path (never the content) is in argv
+    assert.equal(a.args.filter((x) => x === '--strict-mcp-config').length, 1);
+    assert.equal(a.args.filter((x) => x === '--mcp-config').length, 1);
+    assert.equal(a.args[a.args.indexOf('--mcp-config') + 1], join(base.work, 'mcp.json'));
+    assert.ok(!a.args.join('\n').includes('STUB_CALLS'));
     // step (c): no gate hook, the dump hook alone, so the tool is denied by dontAsk only
     const c = buildLaunch({ ...base, dump: true, gate: false });
     const cs = JSON.parse(c.args[c.args.indexOf('--settings') + 1]);
@@ -172,6 +195,8 @@ async function fixtureDir(files) {
 
 test('spike harness: evaluateS1 proposes PASS only when (a), (b), (c) hold and records the forms (d), (e)', async () => {
   const vk = { n: 1, server: 'mcp-workspace-assistant', tool: 'messenger-send-message', args: { chat_sn: 'spike-chat', text: 't' } };
+  const init = (servers, tools) => [{ type: 'system', subtype: 'init', mcp_servers: servers.map((name) => ({ name, status: 'connected' })), tools }];
+  const K_OK = init(['mcp-jira', 'generic:gitlab'], ['Agent', 'mcp__mcp-jira__jira_get_issue', 'mcp__generic_gitlab__get_commits']);
   const gl = { n: 1, server: 'generic_gitlab', tool: 'add_merge_request_note', args: { project_id: 'group/proj', merge_request_iid: 7, body: 'b' } };
   const pre = { hook_event_name: 'PreToolUse', tool_name: SEND_TOOLS[0], tool_input: {}, tool_use_id: 'u1' };
   const good = await fixtureDir({
@@ -179,7 +204,7 @@ test('spike harness: evaluateS1 proposes PASS only when (a), (b), (c) hold and r
     'b/calls.jsonl': [vk], 'b/hook-PreToolUse.jsonl': [{ ...pre, agent_id: 'sub', agent_type: 'ai-space-comms' }],
     'c/calls.jsonl': '', 'c/hook-PreToolUse.jsonl': [pre], 'c/code': '0',
     'f/calls.jsonl': '', 'f/code': '0', 'g/calls.jsonl': '', 'g/code': '1',
-    'k/calls.jsonl': '', 'k/code': '0', 'k/out': '{}', 'l/calls.jsonl': '', 'l/code': '0', 'l/out': '{}', 'm/calls.jsonl': '', 'm/code': '0', 'm/out': '{}',
+    'k/calls.jsonl': '', 'k/code': '0', 'k/out': K_OK, 'l/calls.jsonl': '', 'l/code': '0', 'l/out': '{}', 'm/calls.jsonl': '', 'm/code': '0', 'm/out': '{}',
     'd/hook-PostToolUse.jsonl': [{ ...pre, tool_response: 'plain text' }], 'e/calls.jsonl': [gl],
   });
   const bad = await fixtureDir({ 'a/calls.jsonl': [vk], 'a/hook-PreToolUse.jsonl': [pre], 'b/hook-PreToolUse.jsonl': [pre], 'c/calls.jsonl': [vk], 'c/code': '0' });
@@ -196,12 +221,28 @@ test('spike harness: evaluateS1 proposes PASS only when (a), (b), (c) hold and r
     assert.equal(r.facts.f_denied_hook_sleeps, true);
     assert.equal(r.facts.g_denied_hook_exit1, true);
     // SEC12/SEC13: plugin allow, sender agent/skill, CLAUDE_CONFIG_DIR allow
-    assert.deepEqual([r.facts.k_plugin_allow_denied, r.facts.l_sender_agent_hook_fail_denied, r.facts.m_config_dir_allow_hook_fail_denied], [true, true, true]);
+    assert.deepEqual([r.facts.k_strict_mcp_no_foreign, r.facts.l_sender_agent_hook_fail_denied, r.facts.m_config_dir_allow_hook_fail_denied], [true, true, true]);
+    assert.deepEqual(r.facts.k_init, { init_seen: true, servers: ['mcp-jira', 'generic:gitlab'], foreign_servers: [], foreign_tool_count: 0, unexpected_servers: [] });
+    // (k) is judged by the init event of the stream, not by calls
+    const kDir = await fixtureDir({ 'k/out': K_OK });
+    const kBad = (servers, tools) => fixtureDir({ 'k/out': init(servers, tools) });
+    try {
+      assert.equal(evaluateK(join(kDir, 'k/out')).ok, true);
+      for (const [servers, tools] of [
+        [['mcp-jira', 'plugin:productivity:slack'], []], [['plugin_x_y'], []], [['claude.ai Gmail'], []], [['yadisk'], []], [['telegram'], []],
+        [['mcp-jira'], ['mcp__plugin_x_y__ping']], [['mcp-jira'], ['mcp__claude_ai_Gmail__send_message']], [['mcp-jira'], ['mcp__yadisk__x']], [['mcp-jira'], ['mcp__telegram__x']],
+      ]) {
+        const dd = await kBad(servers, tools);
+        try { assert.equal(evaluateK(join(dd, 'k/out')).ok, false, JSON.stringify([servers, tools])); } finally { await rm(dd, { recursive: true, force: true }); }
+      }
+      assert.equal(evaluateK(join(kDir, 'nothing')).ok, false, 'no init event: not a pass');
+      assert.equal(evaluateK(join(kDir, 'nothing')).init_seen, false);
+    } finally { await rm(kDir, { recursive: true, force: true }); }
     for (const name of ['k', 'l', 'm']) {
       const leak = await fixtureDir({
         'a/calls.jsonl': [vk], 'a/hook-PreToolUse.jsonl': [pre], 'b/calls.jsonl': [vk], 'b/hook-PreToolUse.jsonl': [{ ...pre, agent_id: 'sub' }],
         'c/calls.jsonl': '', 'c/code': '0', 'f/calls.jsonl': '', 'f/code': '0', 'g/calls.jsonl': '', 'g/code': '1',
-        ...Object.fromEntries(['k', 'l', 'm'].flatMap((n) => [[`${n}/calls.jsonl`, n === name ? [vk] : ''], [`${n}/code`, '0'], [`${n}/out`, '{}']])),
+        ...Object.fromEntries(['k', 'l', 'm'].flatMap((n) => [[`${n}/calls.jsonl`, n === name ? [vk] : ''], [`${n}/code`, '0'], [`${n}/out`, n === 'k' ? K_OK : '{}']])),
       });
       try { assert.equal(evaluateS1(leak).proposed, 'FAIL', `a call that got through in run ${name} fails S1`); } finally { await rm(leak, { recursive: true, force: true }); }
     }
@@ -272,7 +313,13 @@ test('spike harness: scripts are valid shell, clean up in a trap, use stubs only
   assert.match(common, /trap cleanup EXIT INT TERM/);
   assert.match(common, /launchctl bootout/);
   assert.match(common, /rm -rf "\$T"/);
+  const s1 = await readFile(D('run-s1.sh'), 'utf8');
+  assert.match(s1, /ln -s "\$HOME\/\.claude\/\$d" "\$CFG_M\/\$d"/, '(m): symlinks to ~/.claude/agents and skills');
+  assert.ok(s1.includes('agents skills'));
+  assert.ok(!/\b(cp|rsync|mv)\b[^\n]*\.claude/.test(s1), 'nothing is copied out of ~/.claude');
+  assert.ok(s1.includes('--cfg "$CFG_M"') && s1.includes('--format stream-json'), 'the k run is stream-json, the m run uses the prepared directory');
   const launch = await readFile(D('launch-claude.mjs'), 'utf8');
+  assert.ok(!launch.includes("push('--mcp-config'"), 'the MCP flags come from the production builder, not from the spike');
   assert.ok(launch.includes('--strict-mcp-config'), 'only stub MCP servers are visible to claude');
   for (const [f, name] of [['run-s1.sh', 's1'], ['run-s2.sh', 's2'], ['run-s3.sh', 's3']]) assert.ok((await readFile(D(f), 'utf8')).includes(`evaluate-send.mjs" ${name}`), f);
 });

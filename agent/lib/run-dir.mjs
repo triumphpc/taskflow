@@ -6,6 +6,8 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync 
 import { join } from 'node:path';
 
 export const RUN_KEEP_MS = 14 * 24 * 3600 * 1000;
+/** Временный MCP-конфиг прогона (содержит секреты серверов): живёт только пока работает claude. */
+export const MCP_FILE = 'mcp.json';
 const NAME = /^([A-Za-z0-9_-]{1,40})-(\d{1,16})$/;
 const runsOf = (stateDir) => join(stateDir, 'runs');
 
@@ -65,8 +67,29 @@ export function findLatestRunDir({ stateDir, taskId, now = Date.now(), claimedAt
   return best;
 }
 
+/**
+ * Sweep: удаляет оставшиеся mcp.json во ВСЕХ каталогах прогона (SIGKILL демона не даёт выполниться finally).
+ * Вызывать под замком демона: чужой живой прогон не должен существовать. Каталоги не трогаются.
+ * @returns {number} сколько файлов удалено
+ */
+export function sweepMcpConfigs({ stateDir }) {
+  let names;
+  try { names = readdirSync(runsOf(stateDir)); } catch { return 0; }
+  let removed = 0;
+  for (const name of names) {
+    if (!NAME.test(name)) continue;
+    const dir = join(runsOf(stateDir), name);
+    if (!isPlainDir(dir)) continue;
+    const file = join(dir, MCP_FILE);
+    try { lstatSync(file); } catch { continue; }
+    try { rmSync(file, { force: true }); removed++; } catch { /* останется до следующего раза */ }
+  }
+  return removed;
+}
+
 /** Удаляет каталоги старше keepMs (по метке времени в имени). @returns {number} сколько удалено */
 export function pruneRunDirs({ stateDir, now = Date.now(), keepMs = RUN_KEEP_MS }) {
+  sweepMcpConfigs({ stateDir });                 // оставшиеся секреты уходят и из каталогов, которые ещё хранятся
   let names;
   try { names = readdirSync(runsOf(stateDir)); } catch { return 0; }
   let removed = 0;
