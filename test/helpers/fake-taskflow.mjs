@@ -3,7 +3,7 @@
 import { buildQueue } from '../../js/agent.js';
 import { TaskflowRejected, TaskflowUnavailable } from '../../agent/lib/taskflow-client.mjs';
 
-export function fakeTaskflow(store, { failures = {} } = {}) {
+export function fakeTaskflow(store, { failures = {}, legacy = false } = {}) {   // legacy: старый сервер без journals/journalStored
   const guard = (m) => { if (failures[m]?.()) throw new TaskflowUnavailable(`injected ${m}`); };
   const trans = async (req) => {
     const r = await store.agentTransition(req);
@@ -29,8 +29,20 @@ export function fakeTaskflow(store, { failures = {} } = {}) {
       }
       return out;
     },
-    claim: async ({ id, today }) => { calls.push(['claim', id]); guard('claim'); const r = await trans({ op: 'claim', id, today }); return { ok: true, claimToken: r.agent.claimToken, task: r.task }; },
-    finish: async ({ id, claimToken, status, text }) => { calls.push(['finish', id]); guard('finish'); const r = await trans({ op: 'finish', id, claimToken, status, text }); return { ok: true, status: r.agent.status }; },
-    reap: async ({ id }) => { calls.push(['reap', id]); guard('reap'); const r = await trans({ op: 'reap', id }); return { ok: true, status: r.agent.status }; },
+    claim: async ({ id, today }) => {
+      calls.push(['claim', id]); guard('claim');
+      const r = await trans({ op: 'claim', id, today });
+      return { ok: true, claimToken: r.agent.claimToken, claimedAt: r.agent.claimedAt, task: r.task, ...(!legacy && Array.isArray(r.journals) ? { journals: r.journals } : {}) };
+    },
+    finish: async ({ id, claimToken, status, text, journal }) => {
+      calls.push(['finish', id, journal]); guard('finish');
+      const r = await trans({ op: 'finish', id, claimToken, status, text, ...(journal !== undefined ? { journal } : {}) });
+      return { ok: true, status: r.agent.status, ...(!legacy && r.journalStored === true ? { journalStored: true } : {}) };
+    },
+    reap: async ({ id, journal }) => {
+      calls.push(['reap', id, journal]); guard('reap');
+      const r = await trans({ op: 'reap', id, ...(journal !== undefined ? { journal } : {}) });
+      return { ok: true, status: r.agent.status, ...(!legacy && r.journalStored === true ? { journalStored: true } : {}) };
+    },
   };
 }

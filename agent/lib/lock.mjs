@@ -26,6 +26,7 @@ export function createLock(stateDir, { pid = process.pid } = {}) {
   }
 
   return {
+    stateDir,
     acquire() {
       mkdirSync(stateDir, { recursive: true, mode: 0o700 });
       for (let attempt = 0; attempt < 2; attempt++) {

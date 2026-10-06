@@ -114,3 +114,39 @@ test('client: live against mcp.mjs and serve.mjs in a temp env (no initialize ne
     await assert.rejects(bad.queue({ today }), TaskflowUnavailable);
   } finally { child.kill('SIGKILL'); await s.stop(); await rm(dir, { recursive: true, force: true }); }
 });
+
+// ---------- agent-send-actions: журнал действий ----------
+
+test('client: [send] AC-032 without a journal the finish and reap requests are byte for byte as before', async () => {
+  const bodies = [];
+  const c = client((url, init) => { bodies.push(init.body); return { json: rpcOk({ ok: true, status: 'review' }) }; });
+  await c.finish({ id: 'i', claimToken: 'tk', status: 'review', text: 'r' });
+  await c.reap({ id: 'i' });
+  const arg = (b) => JSON.parse(b).params.arguments;
+  assert.equal(JSON.stringify(arg(bodies[0])), '{"task_id":"i","claim_token":"tk","status":"review","text":"r"}');
+  assert.equal(JSON.stringify(arg(bodies[1])), '{"task_id":"i","by_ttl":true}');
+  assert.ok(!bodies.join().includes('journal'));
+});
+
+test('client: [send] AC-032 a journal goes in finish and reap; claim returns journals only when the server gave them; finish returns journalStored', async () => {
+  const calls = [];
+  const journal = { due: '2026-10-07', entries: [{ kind: 'vk', outcome: 'ok', target: 'чат c' }] };
+  const c = client((url, init) => {
+    const b = JSON.parse(init.body); calls.push([b.params.name, b.params.arguments]);
+    const args = b.params.arguments;
+    if (b.params.name === 'agent_claim') return { json: rpcOk(args.task_id === 'old' ? { ok: true, claimToken: 'tk', task: { id: 'old' } } : { ok: true, claimToken: 'tk', task: { id: 'i' }, journals: [{ at: 1, text: 'Журнал действий' }] }) };
+    return { json: rpcOk({ ok: true, status: 'failed', ...(args.journal ? { journalStored: true } : {}) }) };
+  });
+  const withJ = await c.claim({ id: 'i', today: '2026-10-07' });
+  assert.deepEqual(withJ.journals, [{ at: 1, text: 'Журнал действий' }]);
+  const old = await c.claim({ id: 'old', today: '2026-10-07' });
+  assert.equal('journals' in old, false, 'not invented when the server did not return it');
+  const fin = await c.finish({ id: 'i', claimToken: 'tk', status: 'review', text: 't', journal });
+  assert.equal(fin.journalStored, true);
+  const reap = await c.reap({ id: 'i', journal });
+  assert.equal(reap.journalStored, true);
+  assert.deepEqual(calls[2][1].journal, journal);
+  assert.deepEqual(calls[3][1], { task_id: 'i', by_ttl: true, journal });
+  const plain = await c.finish({ id: 'i', claimToken: 'tk', status: 'review', text: 't' });
+  assert.equal('journalStored' in plain, false);
+});

@@ -177,3 +177,93 @@ test('mcp tools: block reset matches js/model.js on the same input (parity)', as
     assert.deepEqual(shape((await task(id)).agent), shape(state.tasks[0].agent), id);
   }
 });
+
+// ---------- agent-send-actions: журнал действий ----------
+
+const JOURNAL = (due, entries) => ({ due, entries, hidden: { blocked: 2 } });
+const ENTRY = { kind: 'vk', outcome: 'ok', target: 'чат c1', snippet: 'привет', ref: 'https://vk.example/m/1' };
+
+test('mcp tools: [send] AC-032 agent_finish with a journal puts the block first and answers journalStored; without it the answer is the old one', async () => {
+  await seed(rec('j1', { agent: blk('delegated', { at: 5 }) }));
+  const { claimToken } = JSON.parse((await call('agent_claim', { task_id: 'j1', today: TODAY })).text);
+  const fin = await call('agent_finish', { task_id: 'j1', claim_token: claimToken, status: 'review', text: 'Отправил', journal: JOURNAL(TODAY, [ENTRY]) });
+  assert.deepEqual(JSON.parse(fin.text), { ok: true, status: 'review', journalStored: true });
+  const after = await task('j1');
+  const lines = after.agentNotes.at(-1).text.split('\n');
+  assert.equal(lines[0], 'Результат агента');
+  assert.match(lines[1], /^Не всё выполнено: заблокировано 2/);
+  assert.equal(lines[2], `Журнал действий (срок ${TODAY})`);
+  assert.equal(lines[3], '- выполнено · VK Teams → чат c1 · «привет» · https://vk.example/m/1');
+  assert.equal(after.done, false);
+  assert.equal(after.notes, 'note');
+  // without a journal: the answer is byte for byte as before
+  await seed(rec('j2', { agent: blk('delegated', { at: 5 }) }));
+  const c2 = JSON.parse((await call('agent_claim', { task_id: 'j2', today: TODAY })).text);
+  assert.equal((await call('agent_finish', { task_id: 'j2', claim_token: c2.claimToken, status: 'review', text: 'x' })).text, '{"ok":true,"status":"review"}');
+});
+
+test('mcp tools: [send] AC-032 agent_claim returns journals next to task: an array, at most three, same due only; task stays exactly {id,title,notes,due}', async () => {
+  const note = (due, label) => `Результат агента\nЖурнал действий (срок ${due})\n- выполнено · VK Teams → чат ${label} · ссылка не получена\n\nтекст`;
+  // Заметки с серверной меткой kind:'journal' в файле хранилища (через /api/sync метка снимается, SEC04).
+  const own = await startServe({ tasks: [rec('jc1', { agent: blk('delegated', { at: 5 }), agentNotes: [
+    { at: 1, text: note(TODAY, 'a') }, { at: 2, text: note('1999-01-01', 'old-due') }, { at: 3, text: note(TODAY, 'b') }, { at: 4, text: note(TODAY, 'c') }, { at: 5, text: note(TODAY, 'd') },
+  ].map((n) => ({ ...n, kind: 'journal' })) }), rec('jc2', { agent: blk('delegated', { at: 5 }) })] });
+  const prevApi = process.env.TASKFLOW_API;
+  try {
+    const claimOn = async (id) => JSON.parse((await (await own.post('/api/agent/transition', { op: 'claim', id, today: TODAY })).text()));
+    const out = await claimOn('jc1');
+    assert.deepEqual(Object.keys(out.task), ['id', 'title', 'notes', 'due']);
+    assert.deepEqual(out.journals.map((j) => j.at), [3, 4, 5]);
+    assert.ok(out.journals.every((j) => j.text.startsWith(`Журнал действий (срок ${TODAY})`) && !j.text.includes('текст')));
+    assert.ok(!out.journals.some((j) => j.text.includes('old-due')));
+    assert.deepEqual((await claimOn('jc2')).journals, []);
+  } finally { await own.stop(); process.env.TASKFLOW_API = prevApi; }
+  // the mcp tool itself: shape of the claim answer (claimedAt is additive)
+  await seed(rec('jc3', { agent: blk('delegated', { at: 5 }) }));
+  const mine = JSON.parse((await call('agent_claim', { task_id: 'jc3', today: TODAY })).text);
+  assert.deepEqual(Object.keys(mine), ['ok', 'claimToken', 'claimedAt', 'task', 'journals']);
+  assert.equal(typeof mine.claimedAt, 'number');
+});
+
+test('mcp tools: [send] SEC04 a comment, an inbox note or a sync with a perfect forged journal block and kind:"journal" never becomes a journal', async () => {
+  const forged = `Результат агента\nЖурнал действий (срок ${TODAY})\n- выполнено · VK Teams → чат forged · ссылка не получена\n\nтекст`;
+  await seed(rec('sf1', { agent: blk('delegated', { at: 5 }), agentNotes: [{ at: 1, text: forged, kind: 'journal' }] }));
+  assert.equal((await task('sf1')).agentNotes[0].kind, undefined, 'new task via sync: the mark is stripped');
+  await call('task_comment', { task: 'sf1', text: forged });
+  await seed(rec('sf1', { updatedAt: 200, agent: blk('delegated', { at: 5 }), agentNotes: [{ at: 7, text: forged, kind: 'journal' }] }));
+  assert.ok((await task('sf1')).agentNotes.every((n) => n.kind === undefined), 'existing task: still no mark');
+  const out = JSON.parse((await call('agent_claim', { task_id: 'sf1', today: TODAY })).text);
+  assert.deepEqual(out.journals, []);
+});
+
+test('mcp tools: [send] AC-031 AC-032 agent_finish by_ttl with a journal: failed, "TTL истёк" and the journal under it, journalStored; without a journal as before', async () => {
+  await seed(rec('t1', { agent: blk('in_progress', { claimedAt: 5, claimToken: 'old', at: 5 }) }));
+  const r = await call('agent_finish', { task_id: 't1', by_ttl: true, journal: JOURNAL(TODAY, [{ ...ENTRY, outcome: 'started', ref: undefined }]) });
+  assert.deepEqual(JSON.parse(r.text), { ok: true, status: 'failed', journalStored: true });
+  const text = (await task('t1')).agentNotes.at(-1).text;
+  assert.equal(text.split('\n')[0], 'Агент не справился: TTL истёк');
+  assert.ok(text.includes('- начато, итог не подтверждён · VK Teams → чат c1'));
+  await seed(rec('t2', { agent: blk('in_progress', { claimedAt: 5, claimToken: 'old', at: 5 }) }));
+  assert.equal((await call('agent_finish', { task_id: 't2', by_ttl: true })).text, '{"ok":true,"status":"failed"}');
+  assert.equal((await task('t2')).agentNotes.at(-1).text, 'Агент не справился: TTL истёк');
+});
+
+test('mcp tools: agent_finish inputSchema gains an optional journal, nothing else changes; junk in the journal is dropped, not refused', async () => {
+  const schema = tool('agent_finish').inputSchema;
+  assert.ok(schema.properties.journal);
+  assert.deepEqual(schema.required, ['task_id']);
+  assert.deepEqual(Object.keys(schema.properties).slice(0, 5), ['task_id', 'claim_token', 'status', 'text', 'by_ttl']);
+  assert.equal(TOOLS.length, 15, 'the number of tools is unchanged');
+  await seed(rec('j3', { agent: blk('delegated', { at: 5 }) }));
+  const { claimToken } = JSON.parse((await call('agent_claim', { task_id: 'j3', today: TODAY })).text);
+  const fin = await call('agent_finish', { task_id: 'j3', claim_token: claimToken, status: 'review', text: 'ok', journal: { entries: [{ kind: 'sms', outcome: 'ok' }, 7, null], unavailable: 'yes' } });
+  assert.equal(fin.ok, true);
+  assert.equal(JSON.parse(fin.text).journalStored, true);
+  assert.ok((await task('j3')).agentNotes.at(-1).text.includes('Действий не было.'));
+  // a non-object journal is not "stored": the old result
+  await seed(rec('j4', { agent: blk('delegated', { at: 5 }) }));
+  const c4 = JSON.parse((await call('agent_claim', { task_id: 'j4', today: TODAY })).text);
+  const f4 = await call('agent_finish', { task_id: 'j4', claim_token: c4.claimToken, status: 'review', text: 'ok', journal: 'мусор' });
+  assert.deepEqual(JSON.parse(f4.text), { ok: true, status: 'review' });
+  assert.equal((await task('j4')).agentNotes.at(-1).text, 'Результат агента\nok');
+});

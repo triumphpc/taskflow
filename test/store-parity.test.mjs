@@ -44,6 +44,13 @@ test('parity: normalization is idempotent', () => {
   }
 });
 
+test('parity: agentNotes keep kind:journal only; unknown kind is dropped in both normalizers (CR-I01)', () => {
+  const f = { id: 'n', title: 't', agentNotes: [{ at: 1, text: 'x', kind: 'journal' }, { at: 2, text: 'y', kind: 'bogus' }] };
+  const want = [{ at: 1, text: 'x', kind: 'journal' }, { at: 2, text: 'y' }];
+  assert.deepEqual(clientNormalize(f).agentNotes, want);
+  assert.deepEqual(mcpNormalize(f).agentNotes, want);
+});
+
 test('parity: SCHEMA stays 1 in js/store.js, sync.mjs, serve.mjs', async () => {
   assert.match(await read('../js/store.js'), /const SCHEMA = 1;/);
   assert.match(await read('../sync.mjs'), /const SCHEMA = 1;/);

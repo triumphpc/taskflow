@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" font-family="Arial, Helvetica, sans-serif" font-size="12">
+<defs>
+<marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#6b7280"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="20" y="24" font-size="13" font-weight="bold" fill="#1f2937">Откуда берётся журнал и где он стоит в заметке (лимит 4000 символов)</text>
+<g fill="#fff" stroke="#9ca3af">
+<rect x="20" y="42" width="150" height="40" rx="4"/><rect x="215" y="42" width="150" height="40" rx="4"/><rect x="410" y="42" width="150" height="40" rx="4"/><rect x="605" y="42" width="270" height="40" rx="4"/>
+</g>
+<g fill="#1f2937" text-anchor="middle">
+<text x="95" y="66">gate: до вызова</text><text x="290" y="60">audit.jsonl</text><text x="290" y="74" font-size="11" fill="#6b7280">пишет процесс</text><text x="485" y="60">демон: сборка</text><text x="485" y="74" font-size="11" fill="#6b7280">после любого исхода</text><text x="740" y="60">agent_finish(status, text, journal)</text><text x="740" y="74" font-size="11" fill="#6b7280">journal: новый необязательный аргумент</text>
+</g>
+<line x1="170" y1="62" x2="213" y2="62" stroke="#6b7280" marker-end="url(#a)"/><line x1="365" y1="62" x2="408" y2="62" stroke="#6b7280" marker-end="url(#a)"/><line x1="560" y1="62" x2="603" y2="62" stroke="#6b7280" marker-end="url(#a)"/>
+<text x="20" y="108" fill="#6b7280" font-size="11">gate: попытка, блок; хук после вызова: итог или ошибка. Если итога нет (таймаут, kill), остаётся «начато, итог не подтверждён».</text>
+<text x="20" y="150" font-size="13" font-weight="bold" fill="#dc2626">Как было бы: журнал в конце текста модели</text>
+<rect x="20" y="162" width="860" height="34" fill="#fff" stroke="#9ca3af"/>
+<rect x="20" y="162" width="70" height="34" fill="#fff" stroke="#9ca3af"/><text x="55" y="183" text-anchor="middle" fill="#1f2937">заголовок</text>
+<rect x="90" y="162" width="630" height="34" fill="#fff" stroke="#9ca3af"/><text x="405" y="183" text-anchor="middle" fill="#1f2937">текст модели</text>
+<rect x="720" y="162" width="160" height="34" fill="#fbe9e7" stroke="#dc2626" stroke-dasharray="4 3"/><text x="800" y="183" text-anchor="middle" fill="#1f2937">журнал</text>
+<line x1="800" y1="150" x2="800" y2="162" stroke="#dc2626"/><text x="880" y="212" text-anchor="end" fill="#dc2626" font-size="11">обрезка 4000 берёт хвост: журнал исчезает первым</text>
+<text x="20" y="250" font-size="13" font-weight="bold" fill="#16a34a">Как принято: журнал первым блоком со своим бюджетом</text>
+<rect x="20" y="262" width="860" height="34" fill="#fff" stroke="#9ca3af"/>
+<rect x="20" y="262" width="70" height="34" fill="#fff" stroke="#9ca3af"/><text x="55" y="283" text-anchor="middle" fill="#1f2937">заголовок</text>
+<rect x="90" y="262" width="290" height="34" fill="#e3f2e7" stroke="#16a34a"/><text x="235" y="283" text-anchor="middle" fill="#1f2937">журнал до 2400, не режется с хвоста</text>
+<rect x="380" y="262" width="500" height="34" fill="#fff" stroke="#9ca3af"/><text x="630" y="283" text-anchor="middle" fill="#1f2937">текст модели: остаток бюджета, режется только он</text>
+<text x="20" y="325" fill="#6b7280" font-size="11">Журнал, не влезший в 2400, сжимается по шагам (короче фрагменты, затем счётчики по типам), записи не выполненных действий сохраняются.</text>
+</svg>

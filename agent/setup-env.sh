@@ -10,7 +10,7 @@ ENV_FILE=${TASKFLOW_AGENT_ENV:-$HOME/.config/taskflow-agent/env}
 DIR=$(dirname "$ENV_FILE")
 NAMES="TASKFLOW_MCP_URL TASKFLOW_MCP_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_CUSTOM_HEADERS \
 AI_LAUNCHER_PAIW_WORKSPACE AI_LAUNCHER_PAIW_DISABLED_ITEMS HTTP_PROXY HTTPS_PROXY NO_PROXY no_proxy \
-CLAUDE_BIN TASKFLOW_AGENT_CWD"
+CLAUDE_BIN TASKFLOW_AGENT_CWD TASKFLOW_AGENT_SEND"
 
 umask 077
 mkdir -p "$DIR"
@@ -23,6 +23,12 @@ SKIPPED=
 for name in $NAMES; do
   value=$(printenv "$name" 2>/dev/null || true)
   if [ -z "$value" ] && [ "$name" = CLAUDE_BIN ]; then value=$(command -v claude 2>/dev/null || true); fi
+  # TASKFLOW_AGENT_SEND (переключатель отправки): если в оболочке его нет, прежняя строка из файла переносится
+  # как есть, пересборка env-файла никогда не снимает существующее значение (SEC03).
+  if [ -z "$value" ] && [ "$name" = TASKFLOW_AGENT_SEND ] && [ -f "$ENV_FILE" ]; then
+    old=$(grep -E '^export TASKFLOW_AGENT_SEND=' "$ENV_FILE" | tail -n 1 || true)
+    if [ -n "$old" ]; then printf '%s\n' "$old" >> "$TMP"; WRITTEN="$WRITTEN $name(kept)"; continue; fi
+  fi
   if [ -z "$value" ]; then SKIPPED="$SKIPPED $name"; continue; fi
   escaped=$(printf '%s' "$value" | sed "s/'/'\\\\''/g")
   printf "export %s='%s'\n" "$name" "$escaped" >> "$TMP"
