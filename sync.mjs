@@ -5,7 +5,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { applyAgentTransition, mergeTaskRecord, normalizeAgent, mergeAgentNotes, AGENT_STATUSES, NOTE_TEXT_MAX } from './js/agent.js';
+import { applyAgentTransition, mergeTaskRecord, normalizeAgent, mergeAgentNotes, extractJournals, normalizeJournal, AGENT_STATUSES, NOTE_TEXT_MAX, NOTE_KIND_JOURNAL } from './js/agent.js';
 
 const SCHEMA = 1;
 
@@ -44,10 +44,14 @@ export function sanitizeIncomingTask(t, cur, now = Date.now()) {
   if ('agentNotes' in out) {
     if (!Array.isArray(out.agentNotes)) delete out.agentNotes;
     else {
-      const known = new Set((Array.isArray(cur?.agentNotes) ? cur.agentNotes : []).map((n) => noteKey(n?.at, n?.text)));
+      const curNotes = Array.isArray(cur?.agentNotes) ? cur.agentNotes : [];
+      const known = new Set(curNotes.map((n) => noteKey(n?.at, n?.text)));
+      // SEC04: метка журнала переживает только у заметок, которые сервер уже хранит с ней; остальное снимается.
+      const journalKeys = new Set(curNotes.filter((n) => n?.kind === NOTE_KIND_JOURNAL).map((n) => noteKey(n.at, n.text)));
       let room = cur ? Math.max(0, AGENT_NOTES_MAX - known.size) : Infinity;
       const kept = [];
-      for (const n of mergeAgentNotes([], out.agentNotes)) {
+      for (const { kind: _drop, ...plain } of mergeAgentNotes([], out.agentNotes)) {
+        const n = journalKeys.has(noteKey(plain.at, plain.text)) ? { ...plain, kind: NOTE_KIND_JOURNAL } : plain;
         if (known.has(noteKey(n.at, n.text))) { kept.push(n); continue; }
         if (n.text.length > NOTE_TEXT_MAX || n.at > now + AGENT_AT_FUTURE_MS) continue;
         if (room > 0) { room--; kept.push(n); }
@@ -144,7 +148,8 @@ export class SyncStore {
   /**
    * Условный переход делегирования (claim | finish | reap). Идёт в той же цепочке записи,
    * что и sync(): что раньше дошло до очереди, то и победило (C7).
-   * req = {op, id, today?, claimToken?, status?, text?} -> {ok:true, agent, rev, task} | {ok:false, reason}
+   * req = {op, id, today?, claimToken?, status?, text?, journal?} -> {ok:true, agent, rev, task, journals?, journalStored?} | {ok:false, reason}
+   * claim добавляет journals (блоки журнала прежних попыток с тем же сроком), finish/reap с journal добавляют journalStored.
    */
   agentTransition(req) {
     const run = this.queue.then(() => this.#transition(req));
@@ -168,7 +173,10 @@ export class SyncStore {
     };
     await this.#write(next);
     const { title, notes, due } = r.task;
-    return { ok: true, agent: r.task.agent, rev: next.rev, task: { id, title, notes, due } };
+    const out = { ok: true, agent: r.task.agent, rev: next.rev, task: { id, title, notes, due } };
+    if (req.op === 'claim') out.journals = extractJournals(cur.agentNotes, { due: typeof cur.due === 'string' ? cur.due.slice(0, 10) : null });
+    else if (req.journal !== undefined) out.journalStored = normalizeJournal(req.journal) !== null;
+    return out;
   }
 
   async #merge(incoming) {

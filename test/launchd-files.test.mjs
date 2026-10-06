@@ -103,6 +103,26 @@ test('launchd: setup-env writes 0700/0600, escapes single quotes, prints names o
   } finally { await rm(home, { recursive: true, force: true }); }
 });
 
+test('launchd: [send] SEC03 setup-env saves TASKFLOW_AGENT_SEND from the shell and never drops an existing value when the shell has none', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'tf-setup-send-'));
+  try {
+    const target = join(home, 'cfg', 'env');
+    const run = (extra) => spawnSync('/bin/sh', [A('setup-env.sh')], { env: { PATH: '/usr/bin:/bin', HOME: home, TASKFLOW_AGENT_ENV: target, CLAUDE_BIN: '/bin/echo', ...extra }, encoding: 'utf8' });
+    const sendLine = async () => (await readFile(target, 'utf8')).split('\n').filter((l) => l.includes('TASKFLOW_AGENT_SEND'));
+    assert.equal(run({ TASKFLOW_AGENT_SEND: 'on' }).status, 0);
+    assert.deepEqual(await sendLine(), ["export TASKFLOW_AGENT_SEND='on'"]);
+    // a rebuild from a shell without the variable keeps the existing line
+    const again = run({});
+    assert.equal(again.status, 0, again.stderr);
+    assert.deepEqual(await sendLine(), ["export TASKFLOW_AGENT_SEND='on'"]);
+    assert.match(again.stdout, /TASKFLOW_AGENT_SEND\(kept\)/);
+    // first creation without any value: no line (read-only by default)
+    await rm(target);
+    run({});
+    assert.deepEqual(await sendLine(), []);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
 test('launchd: scripts install nothing; README documents install, check, rollback, both launch modes (manual step)', async () => {
   for (const f of ['run-delegation.sh', 'setup-env.sh']) assert.ok(!/launchctl/.test(await readFile(A(f), 'utf8')), f);
   const readme = await readFile(A('README.md'), 'utf8');

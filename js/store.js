@@ -160,7 +160,7 @@ export function normalizeTask(t) {
     agentNotes: Array.isArray(t.agentNotes)
       ? t.agentNotes
         .filter((n) => n && n.text)
-        .map((n) => ({ at: Number(n.at) || Date.now(), text: String(n.text) }))
+        .map((n) => ({ at: Number(n.at) || Date.now(), text: String(n.text), ...(n.kind === 'journal' ? { kind: 'journal' } : {}) }))
       : [],
     // Блок делегирования агенту: ключ есть, только если он был в записи (AC-023).
     ...(agent ? { agent } : {}),

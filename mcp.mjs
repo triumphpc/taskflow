@@ -183,7 +183,7 @@ function normalizeTask(t) {
     agentNotes: Array.isArray(t.agentNotes)
       ? t.agentNotes
         .filter((n) => n && n.text)
-        .map((n) => ({ at: Number(n.at) || Date.now(), text: String(n.text) }))
+        .map((n) => ({ at: Number(n.at) || Date.now(), text: String(n.text), ...(n.kind === 'journal' ? { kind: 'journal' } : {}) }))
       : [],
     // Блок делегирования агенту: ключ есть, только если он был в записи (AC-023).
     ...(agent ? { agent } : {}),
@@ -851,7 +851,8 @@ const TOOLS = [
     },
     async run({ task_id: taskId, today }) {
       const r = await transition({ op: 'claim', id: taskId, today });
-      return JSON.stringify({ ok: true, claimToken: r.agent.claimToken, task: r.task });
+      // journals стоит рядом с task, а не внутри него; старый сервер ключа не вернёт, и мы его не придумываем.
+      return JSON.stringify({ ok: true, claimToken: r.agent.claimToken, claimedAt: r.agent.claimedAt, task: r.task, ...(Array.isArray(r.journals) ? { journals: r.journals } : {}) });
     },
   },
   {
@@ -865,14 +866,29 @@ const TOOLS = [
         status: { type: 'string', enum: ['review', 'needs_info', 'failed'] },
         text: { type: 'string', description: 'Результат, вопрос или причина.' },
         by_ttl: { type: 'boolean', description: 'Закрыть зависший in_progress как failed по TTL (токен и статус не нужны).' },
+        journal: {
+          type: 'object',
+          description: 'Журнал отправок прогона (необязательно): попадает в заметку агента первым блоком. Строит демон из аудита хуков.',
+          properties: {
+            due: { type: ['string', 'null'], description: 'Срок задачи на момент прогона, YYYY-MM-DD.' },
+            entries: {
+              type: 'array',
+              description: 'Не больше 100 записей: kind, outcome (blocked|ok|error|started), target, ref, snippet, reason.',
+              items: { type: 'object' },
+            },
+            hidden: { type: 'object', description: 'blocked: сколько заблокированных попыток не вошло в entries.' },
+            unavailable: { type: 'boolean', description: 'Журнал прочитать не удалось.' },
+          },
+        },
       },
       required: ['task_id'],
     },
-    async run({ task_id: taskId, claim_token: claimToken, status, text, by_ttl: byTtl }) {
+    async run({ task_id: taskId, claim_token: claimToken, status, text, by_ttl: byTtl, journal }) {
+      const withJournal = journal === undefined ? {} : { journal };
       const r = byTtl === true
-        ? await transition({ op: 'reap', id: taskId })
-        : await transition({ op: 'finish', id: taskId, claimToken, status, text });
-      return JSON.stringify({ ok: true, status: r.agent.status });
+        ? await transition({ op: 'reap', id: taskId, ...withJournal })
+        : await transition({ op: 'finish', id: taskId, claimToken, status, text, ...withJournal });
+      return JSON.stringify({ ok: true, status: r.agent.status, ...(r.journalStored === true ? { journalStored: true } : {}) });
     },
   },
 ];

@@ -1,20 +1,37 @@
 #!/usr/bin/env node
 // Демон делегирования: один прогон по расписанию launchd. Берёт делегированные задачи на сегодня,
-// запускает claude (только чтение), пишет результат условной командой agent_finish.
+// запускает claude (режим с отправкой под gate или «только чтение»), пишет результат условной командой
+// agent_finish вместе с журналом отправок.
 // Без зависимостей, Node 18+. Секреты и тексты задач в логи не попадают (C15).
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { toDateStr } from '../js/core.js';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { toDateStr, datePart } from '../js/core.js';
 import { LIMITS } from '../js/agent.js';
 import { createTaskflowClient, TaskflowRejected, TaskflowUnavailable } from './lib/taskflow-client.mjs';
 import { runClaude, killTrackedGroups } from './lib/claude-run.mjs';
 import { createLock } from './lib/lock.mjs';
 import { ensureSandbox } from './lib/sandbox.mjs';
-import { buildClaudeArgs, buildFallbackInvocation, LIMITS_RUN } from './lib/policy.mjs';
+import { buildClaudeArgs, buildFallbackInvocation, isSendEnabled, LIMITS_RUN } from './lib/policy.mjs';
 import { buildPrompt } from './lib/prompt.mjs';
 import { parseClaudeOutput } from './lib/output.mjs';
+import { defaultPolicyPath, policyState } from './lib/send-policy.mjs';
+import { createRunDir, findLatestRunDir, pruneRunDirs } from './lib/run-dir.mjs';
+import { readAudit, buildJournal } from './lib/audit.mjs';
+import { checkSettingsForSend } from './lib/settings-preflight.mjs';
+import { readFileSync } from 'node:fs';
+
+export const GATE_PATH = fileURLToPath(new URL('./hooks/send-gate.mjs', import.meta.url));
+
+/** Заметка со спайками S1..S3: вердикты вносит пользователь (SEC03: предупреждение, не запрет). */
+export const SPIKE_NOTE = fileURLToPath(new URL('../openspec/changes/archive/2026-10-06-agent-send-actions/spike-s1-s3.md', import.meta.url));
+/** @returns {{ s1: boolean, s3: boolean }} true только при строке `S1: PASS` / `S3: PASS` */
+export function spikeVerdicts(path = SPIKE_NOTE) {
+  let text = '';
+  try { text = readFileSync(path, 'utf8'); } catch { /* нет файла: не пройдено */ }
+  return { s1: /^S1: PASS\s*$/m.test(text), s3: /^S3: PASS\s*$/m.test(text) };
+}
 
 export const EXIT = Object.freeze({ OK: 0, FAILURE: 1, CONFIG: 78 });
 export const REQUIRED_ENV = ['TASKFLOW_MCP_URL', 'TASKFLOW_MCP_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS',
@@ -23,17 +40,40 @@ export const REQUIRED_ENV = ['TASKFLOW_MCP_URL', 'TASKFLOW_MCP_TOKEN', 'ANTHROPI
 const MAX_TEXT = 4 * LIMITS.NOTE_MAX;
 const errText = (e) => String(e?.message || e).slice(0, 160);
 
+/** Счётчики журнала для лога: только числа, ни адресатов, ни ссылок, ни текстов (C13). */
+const journalCounts = (j) => {
+  const by = (o) => (j?.entries || []).filter((e) => e.outcome === o).length;
+  return { ok: by('ok'), blocked: by('blocked'), error: by('error'), started: by('started'), hiddenBlocked: j?.hidden?.blocked || 0 };
+};
+
 /**
  * @returns {Promise<{outcome:'locked'|'empty'|'unavailable'|'done', processed:{id:string,status:string}[], reaped:string[]}>}
  */
 export async function runOnce({
   client, run = runClaude, lock, env = process.env, now = () => new Date(), log = () => {},
   command, argsPrefix = [], invocation, limits = LIMITS_RUN, cwd, signal, passEnv,
+  send = isSendEnabled(env), stateDir = lock?.stateDir, policyPath, nodePath = process.execPath, gatePath = GATE_PATH,
+  runDirs = { create: createRunDir, find: findLatestRunDir, prune: pruneRunDirs }, audit = { read: readAudit }, spikeNote = SPIKE_NOTE,
 }) {
   const result = { outcome: 'done', processed: [], reaped: [] };
+  if (send && !stateDir) throw new TypeError('stateDir обязателен в режиме с отправкой');
+  const policyFile = policyPath || env.TASKFLOW_AGENT_SEND_POLICY || defaultPolicyPath(env.HOME || homedir());
+  /** Журнал из каталога прогона: аудит хуков, склеенный по tool_use_id. Сбой чтения даёт unavailable. */
+  const readJournal = (dir, due, id) => {
+    try { return buildJournal(audit.read(dir), { due }); } catch (err) {
+      log({ event: 'journal_unavailable', id, error: errText(err) });
+      return { due: due ?? null, entries: [], unavailable: true };
+    }
+  };
   if (!lock.acquire()) { log({ event: 'locked' }); return { ...result, outcome: 'locked' }; }
   try {
     const today = toDateStr(now());                       // локальная дата Mac (C4, C8)
+    if (send) {
+      try { runDirs.prune({ stateDir, now: now().getTime() }); } catch (err) { log({ event: 'prune_failed', error: errText(err) }); }
+      log({ event: 'send_mode', send: true, policy: policyState(policyFile) });
+      const sp = spikeVerdicts(spikeNote);
+      if (!sp.s1 || !sp.s3) log({ event: 'send_spikes_not_passed', s1: sp.s1, s3: sp.s3 });
+    } else log({ event: 'send_mode', send: false });
     let q;
     try { q = await client.queue({ today }); } catch (err) {
       if (err instanceof TaskflowUnavailable) { log({ event: 'unavailable', step: 'queue', error: errText(err) }); return { ...result, outcome: 'unavailable' }; }
@@ -41,7 +81,15 @@ export async function runOnce({
     }
 
     for (const s of q.stale || []) {
-      try { await client.reap({ id: s.id }); result.reaped.push(s.id); log({ event: 'reaped', id: s.id }); } catch (err) {
+      // Журнал зависшего прогона берётся из последнего каталога задачи; нет каталога или аудит нечитаем: перевод без журнала.
+      let journal;
+      if (send) {
+        try {
+          const found = runDirs.find({ stateDir, taskId: s.id, now: now().getTime(), claimedAt: s.claimedAt ?? null });
+          if (found) journal = buildJournal(audit.read(found.dir), { due: found.meta?.due ?? null });
+        } catch (err) { log({ event: 'journal_unavailable', id: s.id, error: errText(err) }); journal = undefined; }
+      }
+      try { await client.reap(journal ? { id: s.id, journal } : { id: s.id }); result.reaped.push(s.id); log({ event: 'reaped', id: s.id }); } catch (err) {
         log({ event: 'reap_refused', id: s.id, error: errText(err) });
       }
     }
@@ -60,11 +108,43 @@ export async function runOnce({
       const { claimToken } = claimed;
       log({ event: 'claimed', id: item.id });
 
-      const inv = invocation ? invocation() : { command, args: [...argsPrefix, ...buildClaudeArgs()] };
+      const task = claimed.task || item;
+      const due = datePart(task.due) ?? null;
+      const writeFailed = async (text) => {
+        try {
+          await client.finish({ id: item.id, claimToken, status: 'failed', text });
+          result.processed.push({ id: item.id, status: 'failed' });
+        } catch (err) {
+          log({ event: err instanceof TaskflowRejected ? 'finish_refused' : 'finish_unavailable', id: item.id, reason: err.reason, error: errText(err) });
+          result.processed.push({ id: item.id, status: 'not_written' });
+        }
+      };
+
+      let runDir;
+      if (send) {
+        // C15: без ключа journals сервер старый, отправка прошла бы без журнала. До запуска claude задача падает.
+        if (!Array.isArray(claimed.journals)) {
+          log({ event: 'journals_unsupported', id: item.id });
+          await writeFailed('Сервер не поддерживает журнал действий');
+          continue;
+        }
+        try { runDir = runDirs.create({ stateDir, taskId: item.id, due, now: now().getTime(), claim: { claimToken, claimedAt: claimed.claimedAt } }).dir; } catch (err) {
+          log({ event: 'run_dir_failed', id: item.id, error: errText(err) });
+          await writeFailed('Не удалось подготовить каталог прогона');
+          continue;
+        }
+      }
+
+      const buildOpts = send ? { send: true, gate: { nodePath, gatePath, runDir, policyPath: policyFile } } : {};
+      const inv = invocation ? invocation(buildOpts) : { command, args: [...argsPrefix, ...buildClaudeArgs(buildOpts)] };
+      const prompt = send ? buildPrompt(task, { send: true, previous: claimed.journals.map((j) => j?.text).filter((t) => typeof t === 'string') }) : buildPrompt(task);
+      // AUTONOMOUS_RUN=1 только в режиме с отправкой (C14, ADR-008); TASKFLOW_* по-прежнему не доходят до claude.
+      const runEnv = send ? { ...env, AUTONOMOUS_RUN: '1' } : env;
+      const runPassEnv = send ? [...(passEnv || []), /^AUTONOMOUS_RUN$/] : passEnv;
       const r = await run({
-        command: inv.command, args: inv.args, input: buildPrompt(claimed.task || item), env, cwd,
+        command: inv.command, args: inv.args, input: prompt, env: runEnv, cwd,
         timeoutMs: limits.TASK_TIMEOUT_MS, pollMs: limits.POLL_MS, killGraceMs: limits.KILL_GRACE_MS,
-        stdoutCapBytes: limits.STDOUT_CAP_BYTES, log, signal, passEnv,
+        stdoutCapBytes: limits.STDOUT_CAP_BYTES, log, signal, passEnv: runPassEnv,
         shouldAbort: async () => {
           const t = (await client.queue({ today, taskId: item.id })).task;
           return !t || !t.exists || t.done || t.status !== 'in_progress' || t.claimToken !== claimToken;
@@ -74,6 +154,7 @@ export async function runOnce({
       let outcome;
       if (r.kind === 'aborted') {
         log({ event: signal?.aborted ? 'interrupted' : 'aborted', id: item.id });
+        if (send) log({ event: 'audit_at_abort', id: item.id, ...journalCounts(readJournal(runDir, due, item.id)) });
         result.processed.push({ id: item.id, status: 'aborted' });
         continue;                                      // при остановке демона цикл выше прервётся; задачу вернёт reaper по TTL
       }
@@ -81,10 +162,15 @@ export async function runOnce({
       else if (r.kind === 'spawn_error') outcome = { status: 'failed', text: `Не удалось запустить claude: ${r.error?.code || 'ошибка'}` };
       else outcome = parseClaudeOutput({ stdout: r.stdout, code: r.code, signal: r.signal });
       const text = outcome.text.length > MAX_TEXT ? outcome.text.slice(0, MAX_TEXT) : outcome.text;
+      // Журнал строится из аудита хуков при любом исходе (review, needs_info, failed, таймаут, spawn_error), не из текста модели.
+      const journal = send ? readJournal(runDir, due, item.id) : undefined;
 
       try {
-        await client.finish({ id: item.id, claimToken, status: outcome.status, text });
-        log({ event: 'finished', id: item.id, status: outcome.status, ms: r.durationMs, costUsd: outcome.costUsd });
+        const fin = await client.finish(send
+          ? { id: item.id, claimToken, status: outcome.status, text, journal }
+          : { id: item.id, claimToken, status: outcome.status, text });
+        if (send && fin?.journalStored !== true) log({ event: 'journal_not_stored', id: item.id });   // результат уже записан, повторять нельзя
+        log({ event: 'finished', id: item.id, status: outcome.status, ms: r.durationMs, costUsd: outcome.costUsd, ...(send ? journalCounts(journal) : {}) });
         result.processed.push({ id: item.id, status: outcome.status });
       } catch (err) {
         // Без повторов (C12): отказ — закрыли или сняли делегирование; недоступность — закроет reaper по TTL.
@@ -113,6 +199,13 @@ export async function main(env = process.env, { log = stdoutLog, run = runClaude
     log({ event: 'config_error', problem: 'sandbox', error: errText(err) });
     return EXIT.CONFIG;
   }
+  if (isSendEnabled(env)) {
+    const pf = checkSettingsForSend({ home: env.HOME || homedir(), cwd, configDir: env.CLAUDE_CONFIG_DIR });
+    if (!pf.ok) {
+      log({ event: 'config_error', problem: 'settings_allow_send', files: pf.problems.map((p) => ({ file: p.file, reason: p.reason })) });   // без значений правил
+      return EXIT.CONFIG;
+    }
+  }
   const ac = new AbortController();
   // Повторный сигнал (SEC06): не ждём вежливой остановки, убиваем группу ребёнка и выходим.
   let signals = 0;
@@ -134,6 +227,9 @@ export async function main(env = process.env, { log = stdoutLog, run = runClaude
       run, lock: createLock(stateDir), env, log, passEnv,
       command: env.CLAUDE_BIN, invocation: fallback ? buildFallbackInvocation : undefined,
       cwd, signal: ac.signal,
+      // Режим и путь политики: TASKFLOW_AGENT_SEND (только `on` включает отправку, SEC03), TASKFLOW_AGENT_SEND_POLICY.
+      send: isSendEnabled(env), stateDir,
+      policyPath: env.TASKFLOW_AGENT_SEND_POLICY || defaultPolicyPath(env.HOME || homedir()),
     });
     log({ event: 'run_end', outcome: out.outcome, processed: out.processed.length, reaped: out.reaped.length });
     return EXIT.OK;

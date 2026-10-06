@@ -4,7 +4,9 @@ import {
   AGENT_STATUSES, AGENT_LABELS, AGENT_TONE, LIMITS, normalizeAgent, nextAt, delegateBlock, clearBlock, resetBlock,
   reconcileAgent, isDelegable, agentView, mergeAgent, mergeAgentNotes, mergeTaskRecord, composeNote,
   applyAgentTransition, buildQueue,
+  JOURNAL_MAX, JOURNAL_HEADER, INCOMPLETE_MAX, NOTE_TEXT_MAX, normalizeJournal, extractJournals,
 } from '../js/agent.js';
+import { readFileSync } from 'node:fs';
 
 const TODAY = '2026-10-04';
 const NOW = 1_800_000_000_000;
@@ -379,4 +381,241 @@ test('reconcile: pure and idempotent (second application on its own result chang
   const a = reconcileAgent(t, 'close', ctx);
   assert.equal(reconcileAgent({ ...t, agent: a }, 'close', ctx), undefined);
   assert.equal(t.agent.status, 'failed');
+});
+
+// ---------- agent-send-actions: журнал действий ----------
+
+const BASE = JSON.parse(readFileSync(new URL('./fixtures/readonly-baseline.json', import.meta.url), 'utf8'));
+const e = (o) => ({ kind: 'vk', outcome: 'ok', target: 'чат c1', snippet: 'привет', ref: 'https://vk.example/m/1', ...o });
+const J = (entries, o = {}) => ({ due: '2026-10-07', entries, ...o });
+const lineCount = (text, prefix) => text.split('\n').filter((l) => l.startsWith(prefix)).length;
+
+test('journal: [send] AC-028 composeNote without a journal (or with junk) is byte for byte the old result', () => {
+  const statuses = ['review', 'needs_info', 'failed'];
+  statuses.forEach((st, i) => {
+    assert.equal(composeNote(st, 'текст\nещё  строка'), BASE.notes[i]);
+    for (const junk of [undefined, null, 'x', 5, [], true]) assert.equal(composeNote(st, 'текст\nещё  строка', junk), BASE.notes[i], String(junk));
+  });
+  assert.equal(NOTE_TEXT_MAX, LIMITS.NOTE_MAX + 64 + INCOMPLETE_MAX);
+  assert.equal(JOURNAL_MAX, 2400);
+  assert.equal(JOURNAL_HEADER, 'Журнал действий');
+});
+
+test('journal: [send] AC-015 AC-016 ok entries show kind, target, snippet and a link or "ссылка не получена"; blocked and error show a reason', () => {
+  const note = composeNote('review', 'Готово', J([
+    e({}),
+    e({ kind: 'jira', target: 'OPS-1', snippet: 'коммент', ref: undefined }),
+    e({ kind: 'mr_discussion', outcome: 'error', target: 'g/p!12 src/a.go:40', reason: 'timeout', ref: undefined }),
+    e({ kind: 'jira', outcome: 'blocked', target: 'OPS-12', reason: 'not_allowed', ref: undefined }),
+    e({ kind: 'confluence', outcome: 'started', target: 'DEV: Отчёт', ref: undefined }),
+  ], { hidden: { blocked: 12 } }));
+  const lines = note.split('\n');
+  assert.equal(lines[0], 'Результат агента');
+  assert.equal(lines[1], 'Не всё выполнено: заблокировано 13, ошибок 1, начато без итога 1');
+  assert.equal(lines[2], 'Журнал действий (срок 2026-10-07)');
+  assert.equal(lines[3], '- выполнено · VK Teams → чат c1 · «привет» · https://vk.example/m/1');
+  assert.equal(lines[4], '- выполнено · Jira → OPS-1 · «коммент» · ссылка не получена');
+  assert.equal(lines[5], '- ошибка (timeout) · MR: обсуждение → g/p!12 src/a.go:40 · «привет»');
+  assert.equal(lines[6], '- заблокировано (адресат вне списка) · Jira → OPS-12 · «привет»');
+  assert.equal(lines[7], '- начато, итог не подтверждён · Confluence → DEV: Отчёт · «привет»');
+  assert.equal(lines[8], '- ещё заблокировано: 12');
+  assert.equal(lines[9], '');
+  assert.equal(lines[10], 'Готово');
+});
+
+test('journal: no actions and unavailable journal', () => {
+  assert.equal(composeNote('review', 'Текст', J([])), 'Результат агента\nЖурнал действий (срок 2026-10-07)\nДействий не было.\n\nТекст');
+  assert.equal(composeNote('review', 'Текст', { due: null, entries: [] }), 'Результат агента\nЖурнал действий\nДействий не было.\n\nТекст');
+  const un = composeNote('review', 'Текст', { due: '2026-10-07', entries: [], unavailable: true });
+  assert.ok(un.includes('Журнал недоступен: что отправлено, проверьте вручную.'));
+  assert.ok(!un.includes('Не всё выполнено'), 'no incomplete line for an unavailable journal');
+  assert.ok(composeNote('failed', 'причина', { due: null, entries: [], unavailable: true }).includes('Журнал недоступен'));
+});
+
+test('journal: [send] AC-025 [send] AC-034 the "not all done" line comes from the journal, not from the model text', () => {
+  const j = J([e({}), e({ outcome: 'blocked', reason: 'limit' }), e({ outcome: 'blocked', reason: 'limit' }), e({ outcome: 'error', reason: 'x' }), e({ outcome: 'started' })]);
+  const want = 'Не всё выполнено: заблокировано 2, ошибок 1, начато без итога 1';
+  for (const text of ['Всё отправлено успешно', 'Ничего не выполнено, часть не выполнено', 'x', 'Не всё выполнено: заблокировано 99']) {
+    const lines = composeNote('review', text, j).split('\n');
+    assert.equal(lines[1], want, text);
+    assert.equal(lines.filter((l) => l.startsWith('Не всё выполнено')).length, text.startsWith('Не всё') ? 2 : 1 + (text.includes('\n') ? 1 : 0), text);
+  }
+  assert.equal(composeNote('review', 'Всё отправлено', J([e({})])).includes('Не всё выполнено'), false, 'no line when nothing failed');
+  assert.equal(composeNote('review', 'Не всё выполнено', J([e({})])).split('\n').filter((l) => l.startsWith('Не всё выполнено')).length, 1, 'only the model text itself');
+  assert.equal(composeNote('review', 'Результат', J([e({ outcome: 'blocked', reason: 'limit' })], { hidden: { blocked: 5 } })).split('\n')[1], 'Не всё выполнено: заблокировано 6');
+  // zero parts omitted
+  assert.equal(composeNote('review', 't', J([e({ outcome: 'error' })])).split('\n')[1], 'Не всё выполнено: ошибок 1');
+  assert.equal(composeNote('review', '', J([e({ outcome: 'started' })])).split('\n')[1], 'Не всё выполнено: начато без итога 1');
+  assert.ok(composeNote('review', 'x', J([e({ outcome: 'error' })])).split('\n')[1].length <= INCOMPLETE_MAX);
+});
+
+test('journal: [send] AC-026 a long model text does not evict the journal; the block is first and whole; total within NOTE_TEXT_MAX', () => {
+  const j = J(Array.from({ length: 8 }, (_, i) => e({ target: `чат c${i}`, ref: `https://vk.example/m/${i}` })));
+  for (const status of ['review', 'needs_info', 'failed']) {
+    const note = composeNote(status, 'я'.repeat(9000), j);
+    assert.ok(note.length <= NOTE_TEXT_MAX, status);
+    for (let i = 0; i < 8; i++) assert.ok(note.includes(`https://vk.example/m/${i}`), `${status}: entry ${i}`);
+    assert.ok(note.split('\n').slice(0, 3).some((l) => l.startsWith(JOURNAL_HEADER)), `${status}: the header is within the first three lines`);
+  }
+  assert.equal(composeNote('review', 'я'.repeat(9000), j).endsWith('…'), true, 'the model text is the one that gets cut');
+  // the worst case for every status never exceeds the cap, whatever the inputs
+  const worst = J(Array.from({ length: 100 }, (_, i) => e({ outcome: ['ok', 'error', 'started', 'blocked'][i % 4], target: 'я'.repeat(200), snippet: 'ю'.repeat(200), ref: 'ё'.repeat(300), reason: 'ж'.repeat(200) })), { hidden: { blocked: 9_999_999 } });
+  for (const status of ['review', 'needs_info', 'failed']) assert.ok(composeNote(status, 'я'.repeat(50000), worst).length <= NOTE_TEXT_MAX, status);
+});
+
+test('journal: compression keeps a block within JOURNAL_MAX; error and started are not lost before the last step', () => {
+  const kinds = ['vk', 'mr_note', 'mr_discussion', 'mr_reply', 'jira', 'confluence'];
+  const entries = Array.from({ length: 60 }, (_, i) => ({
+    kind: kinds[i % 6], outcome: ['ok', 'blocked', 'blocked', 'blocked', 'error', 'started'][i % 6],
+    target: `цель ${i}`, snippet: 'ф'.repeat(100), ref: i % 6 === 0 ? `https://example.org/${'p'.repeat(60)}/${i}` : undefined, reason: i % 6 === 1 ? 'limit' : i % 6 === 4 ? 'бум' : undefined,
+  }));
+  const note = composeNote('review', 'т', J(entries));
+  const block = note.slice(note.indexOf(JOURNAL_HEADER)).split('\n\n')[0];
+  assert.ok(block.length <= JOURNAL_MAX, `block is ${block.length}`);
+  assert.equal(lineCount(block, '- ошибка'), entries.filter((x) => x.outcome === 'error').length, 'every error survives');
+  assert.equal(lineCount(block, '- начато'), entries.filter((x) => x.outcome === 'started').length, 'every started survives');
+  assert.ok(block.includes('- выполнено:'), 'ok entries are folded to a counter line');
+  assert.match(block, /- заблокировано \(потолок исчерпан\): [^\n]+ ×\d+/);
+});
+
+test('journal: step 4 cuts from the tail and says how many records are left out; error and started go last', () => {
+  const entries = Array.from({ length: 100 }, (_, i) => ({ kind: 'mr_discussion', outcome: i % 2 ? 'error' : 'blocked', target: `проект/очень-длинное-имя-${i} файл/${'d'.repeat(60)}.go:${i + 1}`, snippet: 'ф'.repeat(100), reason: i % 2 ? `причина ${i} ${'п'.repeat(60)}` : `r${i}` }));
+  const note = composeNote('failed', 'причина', J(entries));
+  const block = note.slice(note.indexOf(JOURNAL_HEADER));
+  assert.ok(block.length <= JOURNAL_MAX);
+  assert.match(block, /- … ещё \d+ записей$/);
+  assert.ok(note.split('\n')[1].startsWith('Не всё выполнено: заблокировано 50, ошибок 50'), 'the line counts the full journal, not what fit');
+});
+
+test('journal: needs_info and failed carry the block for non-empty or unavailable journals, and only then', () => {
+  for (const status of ['needs_info', 'failed']) {
+    assert.ok(composeNote(status, 'вопрос\nс переносом', J([e({})])).includes('- выполнено · VK Teams'), status);
+    assert.ok(composeNote(status, 'x', { due: null, entries: [], unavailable: true }).includes('Журнал недоступен'), status);
+    assert.ok(!composeNote(status, 'x', J([])).includes(JOURNAL_HEADER), `${status}: empty journal gives no block`);
+  }
+  assert.equal(composeNote('needs_info', 'вопрос\n  с  переносом', J([e({})])).split('\n')[0], 'Вопрос агента: вопрос с переносом');
+});
+
+test('journal: normalizeJournal drops junk, trims fields to one line, caps sizes', () => {
+  for (const junk of [null, undefined, 'x', 5, [], true]) assert.equal(normalizeJournal(junk), null, String(junk));
+  assert.deepEqual(normalizeJournal({}), { due: null, entries: [] });
+  assert.deepEqual(normalizeJournal({ due: 'вчера', entries: 'x' }), { due: null, entries: [] });
+  const n = normalizeJournal({
+    due: '2026-10-07', hidden: { blocked: 99_999_999 }, unavailable: true,
+    entries: [
+      { kind: 'vk', outcome: 'ok', target: `${'я'.repeat(300)}\nx`, ref: 'р'.repeat(500), snippet: 'с\nн'.repeat(100), reason: 'п'.repeat(200) },
+      { kind: 'sms', outcome: 'ok', target: 't' }, { kind: 'vk', outcome: 'sent', target: 't' }, null, 'str', { kind: 'jira', outcome: 'blocked' },
+    ],
+  });
+  assert.equal(n.entries.length, 2);
+  assert.equal(n.entries[0].target.length, 120);
+  assert.equal(n.entries[0].ref.length, 200);
+  assert.equal(n.entries[0].snippet.length, 100);
+  assert.equal(n.entries[0].reason.length, 80);
+  for (const f of Object.values(n.entries[0])) assert.ok(!String(f).includes('\n'));
+  assert.deepEqual(n.entries[1], { kind: 'jira', outcome: 'blocked', target: '' });
+  assert.equal(n.hidden.blocked, 1_000_000);
+  assert.equal(n.unavailable, true);
+  assert.equal(normalizeJournal({ entries: Array.from({ length: 300 }, () => e({})) }).entries.length, 100);
+});
+
+test('journal: [send] AC-017 review keeps done false on the transition and the journal block goes in first', () => {
+  const j = J([e({})]);
+  const r = applyAgentTransition(running({ agentNotes: [{ at: 1, text: 'old' }] }), { op: 'finish', claimToken: 'tok-1', status: 'review', text: 'готово', journal: j }, NOW);
+  assert.equal(r.ok, true);
+  assert.equal(r.task.done, false);
+  assert.equal(r.task.agent.status, 'review');
+  assert.equal(r.task.agentNotes[1].text, composeNote('review', 'готово', j));
+  assert.equal(r.task.updatedAt, 10);
+  assert.ok(r.task.agentNotes[1].text.split('\n')[1].startsWith(JOURNAL_HEADER));
+});
+
+test('transition: [send] AC-024 finish with a journal for review, needs_info and failed puts the block in; without a journal the result is as before', () => {
+  const j = J([e({}), e({ outcome: 'blocked', reason: 'not_allowed' })]);
+  for (const status of ['review', 'needs_info', 'failed']) {
+    const withJ = applyAgentTransition(running(), { op: 'finish', claimToken: 'tok-1', status, text: 'ответ', journal: j }, NOW);
+    assert.equal(withJ.task.agentNotes[0].text, composeNote(status, 'ответ', j), status);
+    assert.ok(withJ.task.agentNotes[0].text.includes(JOURNAL_HEADER), status);
+    for (const junk of [undefined, null, 'мусор', 7]) {
+      const plain = applyAgentTransition(running(), { op: 'finish', claimToken: 'tok-1', status, text: 'ответ', journal: junk }, NOW);
+      assert.equal(plain.task.agentNotes[0].text, composeNote(status, 'ответ'), `${status} ${junk}`);
+    }
+  }
+});
+
+test('transition: [send] AC-031 TTL reap with a journal: failed, "TTL истёк" and the journal under it; without a journal as before', () => {
+  const stale = () => task({ agent: blk('in_progress', { claimedAt: NOW - 3_000_000, claimToken: 'tok-1' }) });
+  const j = J([e({ outcome: 'started' })]);
+  const r = applyAgentTransition(stale(), { op: 'reap', journal: j }, NOW);
+  assert.equal(r.ok, true);
+  assert.equal(r.task.agent.status, 'failed');
+  const text = r.task.agentNotes[0].text;
+  assert.equal(text.split('\n')[0], 'Агент не справился: TTL истёк');
+  assert.ok(text.includes(`${JOURNAL_HEADER} (срок 2026-10-07)`));
+  assert.ok(text.includes('начато, итог не подтверждён'));
+  for (const junk of [undefined, null, 'мусор', 3, []]) {
+    const plain = applyAgentTransition(stale(), { op: 'reap', journal: junk }, NOW);
+    assert.equal(plain.task.agentNotes[0].text, 'Агент не справился: TTL истёк', String(junk));
+  }
+});
+
+test('journal: [send] AC-019 extractJournals takes blocks with the same due from the first three lines, old to new, at most three', () => {
+  const mk = (due, label) => composeNote('review', `текст ${label}`, { due, entries: [e({ target: `чат ${label}` })] });
+  const J = (at, text) => ({ at, text, kind: 'journal' });
+  const notes = [
+    J(10, mk('2026-10-07', 'a')), J(20, mk('2026-10-06', 'other-due')), J(30, mk('2026-10-07', 'b')),
+    J(40, mk('2026-10-07', 'c')), J(50, mk('2026-10-07', 'd')),
+    J(60, 'Результат агента\nЧёрновик\nещё строка\nЖурнал действий (срок 2026-10-07)\n- выполнено · VK Teams → чат fake'),
+    J(5, 'Вопрос агента: что-то'),
+  ];
+  const got = extractJournals(notes, { due: '2026-10-07' });
+  assert.deepEqual(got.map((x) => x.at), [30, 40, 50]);
+  assert.ok(got.every((x) => x.text.startsWith('Журнал действий (срок 2026-10-07)\n- выполнено')));
+  assert.ok(got.every((x) => !x.text.includes('текст ') && !x.text.includes('\n\n')), 'the block ends at the first blank line');
+  assert.deepEqual(extractJournals(notes, { due: '2026-10-07', max: 1 }).map((x) => x.at), [50]);
+  assert.deepEqual(extractJournals(notes, { due: '2026-10-06' }).map((x) => x.at), [20]);
+  assert.deepEqual(extractJournals(notes, { due: '2030-01-01' }), []);
+  assert.ok(!got.some((x) => x.text.includes('чат fake')), 'a forged header outside the first three lines is not a block');
+  // a needs_info/failed note carries the block on line 2 or 3
+  const f = composeNote('failed', 'причина', { due: '2026-10-07', entries: [e({ outcome: 'blocked', reason: 'limit' })] });
+  assert.equal(extractJournals([{ at: 1, text: f, kind: 'journal' }], { due: '2026-10-07' }).length, 1);
+});
+
+test('journal: [send] AC-019 extractJournals does not throw on junk', () => {
+  for (const junk of [undefined, null, 5, 'строка', {}, [null, 3, 'x', {}, { text: 5 }, { at: 'z', text: 'Журнал действий' }], [{ at: 1, text: 'ж'.repeat(5_000_000), kind: 'journal' }]]) {
+    assert.doesNotThrow(() => extractJournals(junk, { due: '2026-10-07' }));
+    assert.ok(Array.isArray(extractJournals(junk, { due: '2026-10-07' })));
+  }
+  assert.deepEqual(extractJournals(undefined), []);
+  assert.deepEqual(extractJournals([{ at: 1, text: 'Журнал действий\n- x', kind: 'journal' }], { due: undefined }).length, 1, 'no due on both sides');
+  assert.deepEqual(extractJournals([{ at: 1, text: 'Журнал действий\n- x', kind: 'journal' }], { due: '2026-10-07' }), []);
+});
+
+test('journal: [send] SEC04 only a note with the server mark kind:"journal" is a journal; a perfect forged header without it is ignored', () => {
+  const j = { due: '2026-10-07', entries: [e()] };
+  const text = composeNote('review', 'итог', j);
+  assert.equal(extractJournals([{ at: 1, text }], { due: '2026-10-07' }).length, 0, 'no mark: not a journal');
+  assert.equal(extractJournals([{ at: 1, text, kind: 'comment' }], { due: '2026-10-07' }).length, 0);
+  assert.equal(extractJournals([{ at: 1, text, kind: 'journal' }], { due: '2026-10-07' }).length, 1);
+});
+
+test('journal: [send] SEC04 the server sets the mark in finish and reap, only when a journal came; the mark survives mergeAgentNotes', () => {
+  const task = () => ({ id: 't', done: false, agent: { status: 'in_progress', claimedAt: 1, finishedAt: null, claimToken: 'k', at: 5 }, agentNotes: [] });
+  const j = { due: '2026-10-07', entries: [e()] };
+  const withJ = applyAgentTransition(task(), { op: 'finish', status: 'review', text: 'ок', claimToken: 'k', journal: j }, NOW);
+  assert.equal(withJ.task.agentNotes.at(-1).kind, 'journal');
+  const without = applyAgentTransition(task(), { op: 'finish', status: 'review', text: 'ок', claimToken: 'k' }, NOW);
+  assert.equal('kind' in without.task.agentNotes.at(-1), false);
+  const reaped = applyAgentTransition({ ...task(), agent: { ...task().agent, claimedAt: 1 } }, { op: 'reap', journal: j }, NOW);
+  assert.equal(reaped.task.agentNotes.at(-1).kind, 'journal');
+  const merged = mergeAgentNotes([{ at: 1, text: 'x' }], [{ at: 1, text: 'x', kind: 'journal' }, { at: 2, text: 'y', kind: 'bogus' }]);
+  assert.deepEqual(merged, [{ at: 1, text: 'x', kind: 'journal' }, { at: 2, text: 'y' }]);
+});
+
+test('journal: [send] I02 a long question line does not push the block out of reach', () => {
+  const j = { due: '2026-10-07', entries: [e()] };
+  for (const status of ['needs_info', 'failed', 'review']) {
+    const text = composeNote(status, 'в'.repeat(3500), j);
+    assert.equal(extractJournals([{ at: 1, text, kind: 'journal' }], { due: '2026-10-07' }).length, 1, status);
+  }
 });

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "allow": {
+    "vk_chats": [],
+    "gitlab_projects": [],
+    "jira_projects": [],
+    "confluence_spaces": []
+  },
+  "limits": { "vk": 3, "gitlab_comment": 20, "jira": 3, "confluence": 2 }
+}

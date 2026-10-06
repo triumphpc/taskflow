@@ -65,3 +65,38 @@ test('serve http: sync.mjs/serve.mjs import only js/agent.js, js/core.js and nod
     for (const sp of specs) assert.ok(sp.startsWith('node:') || sp.startsWith('./'), `${f}: ${sp}`);
   }
 });
+
+test('serve http: [send] AC-032 transition accepts journal on finish and reap, answers journals on claim and journalStored; codes unchanged', async () => {
+  const note = `Результат агента\nЖурнал действий (срок ${TODAY})\n- выполнено · Jira → OPS-1 · ссылка не получена\n\nтекст`;
+  const s = await startServe({ tasks: [rec({ agentNotes: [{ at: 1, text: note, kind: 'journal' }] }), rec({ id: 't2', agent: { status: 'in_progress', claimedAt: 5, finishedAt: null, claimToken: 'old', at: 10 } })] });
+  try {
+    const claim = await (await s.post('/api/agent/transition', { op: 'claim', id: 't1', today: TODAY })).json();
+    assert.equal(claim.journals.length, 1);
+    assert.ok(claim.journals[0].text.startsWith(`Журнал действий (срок ${TODAY})`));
+    assert.deepEqual(Object.keys(claim.task), ['id', 'title', 'notes', 'due']);
+    const journal = { due: TODAY, entries: [{ kind: 'vk', outcome: 'ok', target: 'чат c', ref: 'https://x/1' }] };
+    const fin = await s.post('/api/agent/transition', { op: 'finish', id: 't1', claimToken: claim.agent.claimToken, status: 'review', text: 'Готово', journal });
+    assert.equal(fin.status, 200);
+    assert.equal((await fin.json()).journalStored, true);
+    const notes = (await s.state()).tasks.find((t) => t.id === 't1').agentNotes;
+    assert.ok(notes.at(-1).text.includes('- выполнено · VK Teams → чат c · https://x/1'));
+    const reap = await s.post('/api/agent/transition', { op: 'reap', id: 't2', journal });
+    assert.equal(reap.status, 200);
+    assert.equal((await reap.json()).journalStored, true);
+    assert.equal((await s.post('/api/agent/transition', { op: 'reap', id: 't2', journal })).status, 409);
+    // a request without a journal gets the old answer shape
+    const plain = await s.post('/api/agent/transition', { op: 'claim', id: 'nope', today: TODAY });
+    assert.equal(plain.status, 409);
+  } finally { await s.stop(); }
+});
+
+test('serve http: [send] AC-028 a synthetic snapshot without any journal reads as before, schema stays 1', async () => {
+  const s = await startServe({ tasks: [rec({ agent: undefined })] });
+  try {
+    const st = await s.state();
+    assert.equal((await (await fetch(`${s.url}/api/ping`)).json()).schema, 1);
+    assert.equal(JSON.parse(await (await import('node:fs/promises')).readFile(`${s.dir}/taskflow.json`, 'utf8')).schema, 1);
+    assert.equal(st.tasks.length, 1);
+    assert.ok(!('agentNotes' in st.tasks[0]) || st.tasks[0].agentNotes.length === 0);
+  } finally { await s.stop(); }
+});

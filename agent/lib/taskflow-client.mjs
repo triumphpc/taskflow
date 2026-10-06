@@ -72,7 +72,8 @@ export function createTaskflowClient({ url, token, fetchImpl = fetch, timeoutMs 
   return {
     queue: ({ today, taskId } = {}) => callTool('agent_queue', { today, ...(taskId !== undefined ? { task_id: taskId } : {}) }),
     claim: ({ id, today }) => callTool('agent_claim', { task_id: id, today }),
-    finish: ({ id, claimToken, status, text }) => callTool('agent_finish', { task_id: id, claim_token: claimToken, status, text }),
-    reap: ({ id }) => callTool('agent_finish', { task_id: id, by_ttl: true }),
+    // journal (журнал отправок) уходит только если задан: запрос без него побайтно прежний.
+    finish: ({ id, claimToken, status, text, journal }) => callTool('agent_finish', { task_id: id, claim_token: claimToken, status, text, ...(journal !== undefined ? { journal } : {}) }),
+    reap: ({ id, journal }) => callTool('agent_finish', { task_id: id, by_ttl: true, ...(journal !== undefined ? { journal } : {}) }),
   };
 }
