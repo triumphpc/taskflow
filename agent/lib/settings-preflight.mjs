@@ -31,7 +31,7 @@ export const settingsFiles = ({ home, cwd, configDir, managedDir = MANAGED_DIR }
 };
 
 const PLUGIN_PREFIX = 'mcp__plugin_';
-const globToRegExp = (glob) => new RegExp(`^${glob.split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 's');
+const globToRegExp = (glob) => new RegExp(`^${glob.replace(/\*+/g, '*').split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 's');
 
 /** Правило allow покрывает инструмент: точное имя, префикс сервера, glob с «*» в любом месте или «всё». Хвост «(…)» срезается. */
 export function ruleCoversTool(rule, tool) {

@@ -141,3 +141,44 @@ test('send-targets: [send] SEC11 invisible leading characters (U+200B, U+00AD, N
   }
   assert.equal(contentRisk(NOTE, { project_id: 'p', merge_request_iid: 1, body: '\u200Bобычный текст a/b' }), null);
 });
+
+// Замер: одна проверка тела должна укладываться в 200 мс (SEC14, ReDoS: лимит stdin хука 1 МБ, таймаут 10 с).
+const timed = (fn) => { const t0 = process.hrtime.bigint(); const r = fn(); return { r, ms: Number(process.hrtime.bigint() - t0) / 1e6 }; };
+
+test('send-targets: [send] SEC14 contentRisk is linear on pathological bodies (each check < 200 ms)', () => {
+  const bodies = {
+    'newlines x200000': '\n'.repeat(200000),
+    'a-newline x300000': 'a\n'.repeat(300000),
+    'CR x200000': '\r'.repeat(200000),
+    'spaces-newline x100000': ' \n'.repeat(100000),
+    'macro starts x40000': '<ac:structured-macro '.repeat(40000),
+  };
+  const calls = [
+    [NOTE, (body) => ({ project_id: 'p', merge_request_iid: 1, body })],
+    [VK, (text) => ({ chat_sn: 'c', text })],
+    [CONF, (body) => ({ space_key: 'D', title: 'T', body })],
+  ];
+  for (const [label, body] of Object.entries(bodies)) {
+    for (const [tool, mk] of calls) {
+      const { r, ms } = timed(() => contentRisk(tool, mk(body)));
+      assert.equal(r, null, `${label} / ${tool.split('__')[2]}`);
+      assert.ok(ms < 200, `${label} / ${tool.split('__')[2]}: ${ms.toFixed(1)} ms`);
+    }
+  }
+});
+
+test('send-targets: [send] SEC14 padding does not hide a risk: action after a huge prefix, macro after many unclosed tags and long attributes', () => {
+  const pad = '\n'.repeat(200000);
+  assert.equal(contentRisk(NOTE, { project_id: 'p', merge_request_iid: 1, body: `${pad}/merge` }), 'quick_action');
+  assert.equal(contentRisk(VK, { chat_sn: 'c', text: `${pad}/start` }), 'quick_action');
+  for (const sep of ['\r\n', '\r', ' ', ' ']) {
+    assert.equal(contentRisk(NOTE, { project_id: 'p', merge_request_iid: 1, body: `текст${sep}/merge` }), 'quick_action', JSON.stringify(sep));
+    assert.equal(contentRisk(VK, { chat_sn: 'c', text: `текст${sep}/x` }), 'quick_action', JSON.stringify(sep));
+  }
+  assert.equal(contentRisk(NOTE, { project_id: 'p', merge_request_iid: 1, body: '  /merge' }), 'quick_action', 'NBSP');
+  assert.equal(contentRisk(CONF, { space_key: 'D', title: 'T', body: `${'<ac:structured-macro '.repeat(40000)}<ac:structured-macro ac:name="html">` }), 'macro');
+  assert.equal(contentRisk(CONF, { space_key: 'D', title: 'T', body: `<ac:structured-macro ac:x="${'y'.repeat(5000)}" ac:name="iframe">` }), 'macro', 'long attributes do not bypass');
+  assert.equal(contentRisk(CONF, { space_key: 'D', title: 'T', body: '<ac:structured-macro <ac:structured-macro ac:name="html">' }), 'macro', 'nested start');
+  assert.equal(contentRisk(CONF, { space_key: 'D', title: 'T', body: '<ac:structured-macro ac:name="code"><ac:structured-macro ac:name="html"/>' }), 'macro', 'second tag');
+  assert.equal(contentRisk(CONF, { space_key: 'D', title: 'T', body: '<ac:structured-macro ac:name="code">name="html"' }), null, 'name outside the tag');
+});

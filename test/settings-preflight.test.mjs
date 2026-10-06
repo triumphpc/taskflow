@@ -124,3 +124,19 @@ test('preflight: [send] SEC13 any allow rule with the mcp__plugin_ prefix is ref
     } finally { await e.cleanup(); }
   }
 });
+
+test('preflight: [send] SEC16 a glob of many consecutive "*" is linear (< 200 ms) and still matches like a single "*"', () => {
+  const t0 = process.hrtime.bigint();
+  assert.equal(ruleCoversTool(`${'*'.repeat(5000)}#`, VK), false);
+  assert.equal(ruleCoversTool(`mcp__${'*'.repeat(5000)}__messenger-send-message`, VK), true);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 200, `${ms.toFixed(1)} ms`);
+});
+
+test('preflight: [send] SEC15 regexp metacharacters in a rule are literal and the glob is anchored', () => {
+  assert.equal(ruleCoversTool('mcp__mcp-workspace-assistant__messenger-send-messag.*', VK), false, '"." is not a wildcard');
+  assert.equal(ruleCoversTool('mcp__(a|b)__x', 'mcp__a__x'), false, 'group is not a group');
+  assert.equal(ruleCoversTool('mcp__(a|b)__x', 'mcp__(a|b)__x'), true, 'but matches itself literally');
+  assert.equal(ruleCoversTool('messenger-send-*', VK), false, 'no mcp__ prefix: anchored at the start');
+  assert.equal(ruleCoversTool('*messenger-send-message', VK), true, 'explicit leading star still works');
+});
