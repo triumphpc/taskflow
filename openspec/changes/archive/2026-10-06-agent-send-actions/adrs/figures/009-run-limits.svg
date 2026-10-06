@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 330" font-family="Arial, Helvetica, sans-serif" font-size="12">
+<defs>
+<marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#6b7280"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="20" y="26" font-size="13" font-weight="bold" fill="#1f2937">Лимиты прогона: до change и в режиме с отправкой (стартовые значения до замера)</text>
+<g fill="#6b7280" font-size="11"><text x="230" y="58" text-anchor="middle">только чтение</text><text x="470" y="58" text-anchor="middle">режим с отправкой</text><text x="720" y="58" text-anchor="middle">почему</text></g>
+<g stroke="#e5e7eb"><line x1="20" y1="66" x2="880" y2="66"/><line x1="20" y1="116" x2="880" y2="116"/><line x1="20" y1="166" x2="880" y2="166"/><line x1="20" y1="216" x2="880" y2="216"/></g>
+<g fill="#1f2937"><text x="20" y="96">--max-turns</text><text x="20" y="146">--max-budget-usd</text><text x="20" y="196">таймаут прогона</text><text x="20" y="246">TTL зависшего in_progress</text></g>
+<g text-anchor="middle" fill="#1f2937"><text x="230" y="96">30</text><text x="230" y="146">2.00</text><text x="230" y="196">15 минут</text><text x="230" y="246">20 минут</text></g>
+<rect x="420" y="78" width="100" height="26" rx="4" fill="#e3f2e7" stroke="#16a34a"/><text x="470" y="96" text-anchor="middle" fill="#1f2937">50</text>
+<rect x="420" y="128" width="100" height="26" rx="4" fill="#e3f2e7" stroke="#16a34a"/><text x="470" y="146" text-anchor="middle" fill="#1f2937">3.00</text>
+<rect x="420" y="178" width="100" height="26" rx="4" fill="#fff" stroke="#9ca3af"/><text x="470" y="196" text-anchor="middle" fill="#1f2937">15 минут</text>
+<rect x="420" y="228" width="100" height="26" rx="4" fill="#fff" stroke="#9ca3af"/><text x="470" y="246" text-anchor="middle" fill="#1f2937">20 минут</text>
+<g fill="#6b7280" font-size="11"><text x="570" y="92">каждый inline-комментарий — отдельный вызов,</text><text x="570" y="106">до 28 отправок плюс чтение</text><text x="570" y="142">запас под те же вызовы</text><text x="570" y="192">не меняется: TTL связан с ним (ADR-002)</text><text x="570" y="242">не меняется</text></g>
+<text x="20" y="290" fill="#1f2937">MCP не успел подключиться: ожидания нет. Недоступное действие попадает в «не выполнено», отправленное остаётся в журнале.</text>
+<text x="20" y="310" fill="#6b7280" font-size="11">Значения подтверждаются спайком S2 на заглушке MCP; до замера они стартовые.</text>
+</svg>
