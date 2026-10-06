@@ -5,12 +5,28 @@
 
 ## Вердикты
 
-S1: PENDING
-S2: PENDING
-S3: PENDING
+S1: FAIL
+S2: PASS
+S3: PASS
 
 Строки выше пользователь заменяет на `PASS` или `FAIL` после ручного прогона. Скрипты пишут только `S1-proposed:`,
 `S2-proposed:`, `S3-proposed:` в блоках фактов ниже. `test/spike-send-harness.test.mjs` проверяет формат заметки и не требует PASS.
+
+### Итог прогона 2026-10-06
+
+- **S1: FAIL по букве критерия, основная защита подтверждена.** Прошли (а), (б), (в), (ж), (з), (л): хук работает под launchd и в субагенте,
+  allow от хука открывает инструмент, без хука, при зависании и при коде 1 вызов отклонён, субагент и skill с send-инструментом при упавшем хуке
+  отклонены. Не прошли:
+  - (к) deny-префикс `mcp__plugin_` в Claude Code не действует: allow-правило `mcp__plugin_x_y` в settings открыло инструмент плагина.
+    В боевом запуске это закрывает preflight: любое allow-правило с `mcp__plugin_` даёт `config_error` и демон не стартует
+    (проверено на временном HOME, `allow_plugin_tool`). Доработка: deny конкретных имён плагинных серверов или `--strict-mcp-config`.
+  - (м) прогон не состоялся: с временным `CLAUDE_CONFIG_DIR` claude не находит агента `ai-space-assistant` (агенты лежат в `~/.claude/agents`)
+    и выходит с кодом 1 до вызова. Ошибка harness, не gate. В env демона `CLAUDE_CONFIG_DIR` не задан. Доработка: симлинк агентов в
+    временный каталог в `run-s1.sh`.
+- **S2: PASS.** t1..t3: 3–5 ходов, 0.16–0.17 USD, лимиты 50/3.00 с запасом. `Agent(<имя>)` принимается, но другие имена не отклоняет,
+  поэтому `NARROW_AGENT` остаётся `false`.
+- **S3: PASS.** Вызов send дошёл до заглушки, хук сработал, превью не мешает.
+- Живая проверка того же дня: делегированная задача отправила сообщение боту из белого списка, журнал в карточке совпал.
 
 ## Как запустить (пользователь, из корня worktree)
 
@@ -41,7 +57,125 @@ SPIKE_OUT="$HOME/Library/Logs/taskflow-spike-send" sh agent/spike/send/run-s3.sh
 - (м) `CLAUDE_CONFIG_DIR` с allow-правилом на send-инструмент при падающем хуке: вызов отклонён, заглушка не тронута (прогон m, SEC12): ___
 
 <!-- S1-facts:begin -->
-S1-proposed: PENDING
+S1-proposed: FAIL  (прогон 2026-10-06; вердикт S1: вносит пользователь)
+
+```json
+{
+  "a_hook_in_main": true,
+  "a_hook_in_subagent": true,
+  "b_allow_opened_tool": true,
+  "b_allow_in_subagent": true,
+  "c_denied_without_hook": true,
+  "f_denied_hook_sleeps": true,
+  "g_denied_hook_exit1": true,
+  "k_plugin_allow_denied": false,
+  "l_sender_agent_hook_fail_denied": true,
+  "m_config_dir_allow_hook_fail_denied": false,
+  "g_pre_fields": [
+    "agent_type",
+    "cwd",
+    "effort",
+    "hook_event_name",
+    "mcp_server",
+    "permission_mode",
+    "prompt_id",
+    "session_id",
+    "tool_input",
+    "tool_name",
+    "tool_use_id",
+    "transcript_path"
+  ],
+  "g_sub_pre_fields": [
+    "agent_id",
+    "agent_type",
+    "cwd",
+    "effort",
+    "hook_event_name",
+    "mcp_server",
+    "permission_mode",
+    "prompt_id",
+    "session_id",
+    "tool_input",
+    "tool_name",
+    "tool_use_id",
+    "transcript_path"
+  ],
+  "g_post_fields": [
+    "agent_type",
+    "cwd",
+    "duration_ms",
+    "effort",
+    "hook_event_name",
+    "mcp_server",
+    "permission_mode",
+    "prompt_id",
+    "session_id",
+    "tool_input",
+    "tool_name",
+    "tool_response",
+    "tool_use_id",
+    "transcript_path"
+  ],
+  "g_fail_fields": [],
+  "d_response_forms": [
+    {
+      "tool": "messenger-send-message",
+      "response": "array(1)",
+      "ref_found": true
+    },
+    {
+      "tool": "add_merge_request_note",
+      "response": "array(1)",
+      "ref_found": true
+    },
+    {
+      "tool": "create_discussion",
+      "response": "array(1)",
+      "ref_found": true
+    },
+    {
+      "tool": "reply_to_discussion",
+      "response": "array(1)",
+      "ref_found": true
+    },
+    {
+      "tool": "jira_add_comment",
+      "response": "array(1)",
+      "ref_found": true
+    },
+    {
+      "tool": "confluence_page_create",
+      "response": "array(1)",
+      "ref_found": true
+    }
+  ],
+  "e_chat_sn": [
+    {
+      "type": "string",
+      "value": "spike-chat"
+    }
+  ],
+  "e_project_id": [
+    {
+      "type": "string",
+      "value": "4242"
+    }
+  ],
+  "stub_calls": {
+    "a": 1,
+    "b": 1,
+    "c": 0,
+    "d": 6,
+    "e": 1,
+    "f": 0,
+    "g": 0,
+    "k": 1,
+    "l": 0,
+    "m": 0
+  },
+  "send_tools_expected": 6
+}
+```
 <!-- S1-facts:end -->
 
 **Если S1 (б) не прошёл**: решение возвращается к пользователю с вариантами: шлюз MCP (ADR-004, вариант E) или отказ от отправки.
@@ -56,7 +190,38 @@ S1-proposed: PENDING
 - (в) Как часто MCP в `pending` на старте: ___
 
 <!-- S2-facts:begin -->
-S2-proposed: PENDING
+S2-proposed: PASS  (прогон 2026-10-06; вердикт S2: вносит пользователь)
+
+```json
+{
+  "a_agent_named_works": true,
+  "a_other_names_rejected": false,
+  "b_tasks": [
+    {
+      "task": "t1",
+      "turns": 3,
+      "cost_usd": 0.1563918,
+      "subtype": "success"
+    },
+    {
+      "task": "t2",
+      "turns": 5,
+      "cost_usd": 0.1638022,
+      "subtype": "success"
+    },
+    {
+      "task": "t3",
+      "turns": 4,
+      "cost_usd": 0.1737156,
+      "subtype": "success"
+    }
+  ],
+  "b_within_limits": true,
+  "c_mcp_status_counts": {
+    "connected": 4
+  }
+}
+```
 <!-- S2-facts:end -->
 
 **Если S2 (а) не прошёл**: остаётся голый `Agent`, отправку держит gate. **Если (б) показал расхождение**: правятся `LIMITS_SEND` (задача T21).
@@ -69,7 +234,16 @@ S2-proposed: PENDING
 - Что мешает (если нет): ___
 
 <!-- S3-facts:begin -->
-S3-proposed: PENDING
+S3-proposed: PASS  (прогон 2026-10-06; вердикт S3: вносит пользователь)
+
+```json
+{
+  "call_reached_stub": true,
+  "hook_fired": true,
+  "claude_exit_code": "0",
+  "stub_calls": 1
+}
+```
 <!-- S3-facts:end -->
 
 **Если S3 не прошёл**: править промпт режима с отправкой (`agent/lib/prompt.mjs`), файлы агента не править.

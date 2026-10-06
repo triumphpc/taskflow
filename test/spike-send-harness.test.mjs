@@ -253,7 +253,8 @@ test('spike harness: the note template parses: verdict lines, all fields of S1 (
   // writing facts replaces the block only, is repeatable, and never writes a verdict line
   const once = renderFacts(note, { name: 'S1', facts: { a: 1 }, proposed: 'PASS' }, '2026-10-06');
   assert.match(once, /^S1-proposed: PASS/m);
-  assert.match(once, /^S1: PENDING$/m, 'the verdict stays with the user');
+  const verdictLine = (t) => (/^S1: .*$/m.exec(t) || [''])[0];
+  assert.equal(verdictLine(once), verdictLine(note), 'the verdict stays with the user');
   assert.equal(renderFacts(once, { name: 'S1', facts: { a: 1 }, proposed: 'PASS' }, '2026-10-06'), once);
   assert.throws(() => renderFacts('no markers', { name: 'S1', facts: {}, proposed: 'FAIL' }));
 });
