@@ -5,6 +5,7 @@ import { fmtDue, plural } from './core.js';
 import { h, clear, linkify } from './dom.js';
 import * as M from './model.js';
 import { schedulePicker } from './scheduler.js';
+import { introAllowed, playIntro } from './moments-intro.js';
 import { openSheet, toast, ctx, openEditor, sourceLine, agentFeed } from './ui.js';
 
 /** Заметку в карточке показываем куском. Режем по границе слова: адрес пробелов
@@ -16,23 +17,32 @@ function clampNotes(notes, max = 220) {
   return (space > max * 0.6 ? cut.slice(0, space) : cut) + '…';
 }
 
+let busy = false; // идёт анимация входа: повторный запуск игнорируется
+
 export function openMoments() {
+  if (busy) return;
+  // Очередь считается один раз и целиком уходит и в анимацию, и в шторку.
   const queue = M.momentsCandidates();
+  if (!queue.length) return openEmpty();           // без анимации
+  if (!introAllowed()) return openQueue(queue);    // «уменьшить движение» или нет WAAPI
+  busy = true;
+  playIntro(queue).finally(() => { busy = false; openQueue(queue); });
+}
 
-  if (!queue.length) {
-    const closeBtn = h('button', { class: 'btn btn-primary' }, 'Закрыть');
-    const emptySheet = openSheet({
-      title: 'Moments',
-      bodyNodes: h('div', { class: 'empty' },
-        h('div', { class: 'big' }, '◎'),
-        h('p', { style: { fontWeight: '600', color: 'var(--text-dim)', marginBottom: '4px' } }, 'Планировать нечего'),
-        h('p', null, 'Ни входящих на разбор, ни просроченных задач, ни задач на сегодня.')),
-      footNodes: [h('span', { class: 'spacer' }), closeBtn],
-    });
-    closeBtn.addEventListener('click', () => emptySheet.close());
-    return;
-  }
+function openEmpty() {
+  const closeBtn = h('button', { class: 'btn btn-primary' }, 'Закрыть');
+  const emptySheet = openSheet({
+    title: 'Moments',
+    bodyNodes: h('div', { class: 'empty' },
+      h('div', { class: 'big' }, '◎'),
+      h('p', { style: { fontWeight: '600', color: 'var(--text-dim)', marginBottom: '4px' } }, 'Планировать нечего'),
+      h('p', null, 'Ни входящих на разбор, ни просроченных задач, ни задач на сегодня.')),
+    footNodes: [h('span', { class: 'spacer' }), closeBtn],
+  });
+  closeBtn.addEventListener('click', () => emptySheet.close());
+}
 
+function openQueue(queue) {
   let index = 0;
   const stats = { planned: 0, done: 0, skipped: 0, deleted: 0 };
 

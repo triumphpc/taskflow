@@ -540,9 +540,9 @@ function autoGrow(el) {
  * ждёт ответа на оба вопроса: раньше раздел молча подставлял сегодняшний день, и
  * «Сегодня» набивался задачами, которых туда никто не клал.
  *
- * Окно не закрывается после Enter — поле очищается, шаги сбрасываются, тост
- * подтверждает, что задача ушла в список. Иначе привычка «закинуть три дела подряд»
- * стоила бы трёх нажатий на «+».
+ * После добавления окно закрывается, а тост «Задача добавлена» с действием «Открыть»
+ * подтверждает, что задача ушла в список. Неготовая форма окно не закрывает. Следующая
+ * задача — новое «+» или `n`: окно каждый раз открывается пустым.
  */
 export function openComposer() {
   // Именно textarea, а не input: input по спецификации вырезает переводы строк,
@@ -595,13 +595,8 @@ export function openComposer() {
     if (!title) return;
     const v = picker.get();
     const task = M.createTask({ title, due: v.due, priority: v.priority ?? 4 });
-    input.value = '';
-    autoGrow(input);
-    seen = { date: null, time: null, priority: null };
-    picker.set({ priority: null, due: null, dateAnswered: false, calendar: false });
-    syncFoot();
-    // Окно остаётся открытым: следующая задача вводится сразу, без нового жеста.
-    input.focus();
+    // Окно закрывается целиком, форму сбрасывать не нужно; список перерисует commit.
+    ui.close();
     toast('Задача добавлена', { actionLabel: 'Открыть', action: () => openEditor(task.id) });
   };
 
@@ -1291,7 +1286,7 @@ export function openSettings() {
         syncStatusBox, syncButtons),
 
       sectionBlock('Планирование дня (Moments)',
-        h('p', { class: 'hint', style: { marginBottom: '8px' } }, 'Во сколько ставить задачу, когда в Moments выбрано «Сегодня».'),
+        h('p', { class: 'hint', style: { marginBottom: '8px' } }, 'Во сколько ставить задачу, когда выбрано «Сегодня».'),
         partsRow),
 
       sectionBlock('Напоминания',
