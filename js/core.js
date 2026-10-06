@@ -52,6 +52,13 @@ export const datePart = (due) => (due ? due.slice(0, 10) : null);
 export const timePart = (due) => (due && due.length > 10 ? due.slice(11, 16) : null);
 export const combineDue = (date, time) => (date ? (time ? `${date}T${time}` : date) : null);
 
+/** Шаг «во сколько» нужен только для сегодняшней даты. null и любая другая дата: нет. */
+export const needsTimeStep = (date, today = todayStr()) => date != null && date === today;
+
+/** Время после выбора дня кнопкой или календарём: у сегодняшнего сохраняется, у остальных сбрасывается. */
+export const timeAfterDayPick = (nextDate, prevTime, today = todayStr()) =>
+  needsTimeStep(nextDate, today) ? (prevTime ?? null) : null;
+
 /** Наивная локальная строка -> Date. Для «весь день» — локальная полночь. */
 export function parseDue(due) {
   if (!due) return null;

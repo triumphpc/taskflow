@@ -5,8 +5,11 @@
 // Вопросы задаются по одному: приоритет → какой день → во сколько. Следующий шаг
 // раскрывается только после ответа на предыдущий, поэтому пользователь никогда не
 // видит перед собой полтора десятка кнопок сразу.
+//
+// Шаг «во сколько» нужен только для сегодняшней даты: у любого другого дня (или без
+// даты) ответ на «когда» сразу последний, и onDone вызывается без третьего шага.
 
-import { todayStr, addDaysStr, toDateStr, fromDateStr, datePart, timePart, combineDue,
+import { todayStr, addDaysStr, needsTimeStep, timeAfterDayPick, toDateStr, fromDateStr, datePart, timePart, combineDue,
   fmtDateShort, MONTHS_NOM } from './core.js';
 import { h, clear } from './dom.js';
 import { state } from './store.js';
@@ -81,8 +84,11 @@ export function schedulePicker({ value = {}, onChange = () => {}, onDone = null,
     date = next;
     dateAnswered = true;
     calMonth = null;
-    if (!next) { time = null; timeAnswered = false; }
-    emit('date', !next);
+    // Время спрашиваем только про сегодня; у остальных дней срок это дата без времени.
+    time = timeAfterDayPick(next, time);
+    const askTime = needsTimeStep(next);
+    if (!askTime) timeAnswered = false;
+    emit('date', !askTime);
   }
 
   function dateRow() {
@@ -208,7 +214,7 @@ export function schedulePicker({ value = {}, onChange = () => {}, onDone = null,
     if (shows('date') && prioReady) {
       node.append(step('Когда', calMonth ? calendar() : dateRow()));
     }
-    if (shows('time') && prioReady && dateAnswered && date) {
+    if (shows('time') && prioReady && dateAnswered && needsTimeStep(date)) {
       node.append(step('Во сколько', timeRow()));
     }
   }
