@@ -35,14 +35,17 @@ same list follows you from your Mac to your iPhone.
 
 **Adding a task.** There is no input field above the list — the main page is the
 list itself. A new task is created with the "+" button in the bottom-right corner
-or with the `n` key; both open the same quick-entry window. The window stays open
-after Enter: the field clears, the steps reset, the caret stays in the field, and
-you can enter a run of tasks one after another.
+or with the `n` key; both open the same quick-entry window. The window closes once
+the task is added, and a toast "Задача добавлена" with an "Открыть" (Open) action
+confirms it; an unfinished form is not submitted and the window stays. For the next
+task, press "+" or `n` again: the window always opens empty.
 
 Priority and due date are asked one step at a time: P1–P4 first, then the day —
 today, tomorrow, in 2 days, next week, a calendar, or "no date" — and only once a
-day is picked does the "what time" step appear: morning, noon, afternoon, evening,
-or no time. Day-part times come from the settings. "Add" and Enter wait for the
+day is picked does the "what time" step appear — and only for "today": morning, noon,
+afternoon, evening, or no time. Any other day (or "no date") is the last answer: the
+due date is a date without a time, and the picker finishes at once. Choosing another
+day clears a time that was set before. Day-part times come from the settings. "Add" and Enter wait for the
 first two answers; the section the window was opened from does not supply a date,
 so a task with no day picked lands in the Inbox.
 
@@ -60,6 +63,11 @@ the calendar and the day parts do that job. "To task" on an inbox item opens a
 sorting window with the same steps and decides nothing for you: until you answer
 the "when" step, the record stays in the Inbox. Moments asks the same questions and
 moves to the next card once the last step is answered.
+
+**Entering Moments.** With a non-empty queue, a short (about 1.5 s) animation plays
+first: numbered billiard balls roll in and form a pyramid, one ball per task (up to 15),
+coloured by priority (a ball without a priority is grey). A tap or any key skips it;
+with "reduce motion" enabled in the system there is no animation at all.
 
 Keyboard shortcuts: `n` new task, `m` Moments, `s` list order, `,` settings, `1`…`6` views (`1` Today, `5` Inbox).
 
@@ -461,6 +469,8 @@ js/store.js             state, localStorage, export/import
 js/model.js             tasks: CRUD, recurrence, per-view queries, manual order
 js/ui.js                rendering, drag and drop, task editor, settings
 js/moments.js           the daily planning wizard
+js/moments-intro.js     the pyramid animation overlay before Moments
+js/pyramid.js           pure layout, colours and timing for that animation
 js/sync.js              exchange with the sync server, applying the merged result
 js/app.js               entry point, routing, shortcuts, reminders
 sw.js                   offline shell cache

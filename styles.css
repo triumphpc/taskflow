@@ -20,6 +20,7 @@
   --p2: #e8930c;
   --p3: #3b82f6;
   --p4: #9aa2b1;
+  --ball-none: #6b7280;
 
   --ok: #2ba36a;
   --warn: #e8930c;
@@ -58,6 +59,7 @@
     --p2: #f0a02a;
     --p3: #5b9bf8;
     --p4: #78808f;
+    --ball-none: #8b93a1;
 
     --ag-wait: #f0b84a;
     --ag-ok: #4fd08a;
@@ -75,6 +77,7 @@
   --text: #171a20; --text-dim: #626a7a; --text-faint: #8a92a3;
   --accent: #5b5bd6; --accent-soft: #eceafd;
   --p1: #e5484d; --p2: #e8930c; --p3: #3b82f6; --p4: #9aa2b1;
+  --ball-none: #6b7280;
   --ag-wait: #8a5a00; --ag-ok: #14703f; --ag-ask: #b4232a;
   --shadow: 0 1px 2px rgba(16,20,30,.06), 0 8px 24px rgba(16,20,30,.07);
   --shadow-lg: 0 12px 48px rgba(16,20,30,.22);
@@ -85,6 +88,7 @@
   --text: #e8eaf0; --text-dim: #9aa3b2; --text-faint: #6b7482;
   --accent: #7c7cf0; --accent-soft: #23234a;
   --p1: #f2555a; --p2: #f0a02a; --p3: #5b9bf8; --p4: #78808f;
+  --ball-none: #8b93a1;
   --ag-wait: #f0b84a; --ag-ok: #4fd08a; --ag-ask: #ff8a8f;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   --shadow-lg: 0 12px 48px rgba(0,0,0,.55);
@@ -501,6 +505,32 @@ body.is-dragging .task-open { pointer-events: none; }
   animation: fade .14s ease-out;
 }
 @keyframes fade { from { opacity: 0; } }
+
+/* ---------- Вход в Moments: бильярдная пирамида ---------- */
+/* Выше шторок (.overlay, 50), ниже тоста (90). Работает только при разрешённой анимации:
+   при «уменьшить движение» оверлея нет, поэтому правило reduce-motion ниже его не касается. */
+
+.intro {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(8, 10, 16, .5);
+  backdrop-filter: blur(2px);
+  animation: fade .15s ease-out;
+}
+.intro-rack { position: absolute; inset: 0; pointer-events: none; }
+.ball {
+  position: absolute; left: 0; top: 0;
+  width: var(--d); height: var(--d); border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.45), rgba(255,255,255,0) 45%), var(--c);
+  box-shadow: 0 2px 6px rgba(0,0,0,.35), inset 0 -3px 5px rgba(0,0,0,.2);
+  display: grid; place-items: center; will-change: transform;
+}
+/* Белый круг и тёмная цифра не зависят от темы: номер читается на любом цвете шара. */
+.ball-num {
+  width: 46%; height: 46%; border-radius: 50%;
+  background: #fff; color: #1f2937;
+  font: 700 calc(var(--d) * .26)/1 system-ui, sans-serif;
+  display: grid; place-items: center;
+}
 
 .sheet {
   width: min(560px, 100%);
