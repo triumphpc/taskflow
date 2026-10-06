@@ -2,26 +2,41 @@
 // Запуск claude для спайков S1..S3: те же аргументы, что у демона (buildClaudeArgs), но MCP только заглушки
 // (--strict-mcp-config), поэтому реальных отправок быть не может. Промпт читается из stdin, вывод в stdout.
 //   node launch-claude.mjs --work <dir> [--no-gate] [--hook-sleep|--hook-fail] [--dump] [--narrow-agent] [--format json|stream-json] [--agent-prompt-only]
-//        [--plugin] [--sender-agent] [--config-dir-allow]   (SEC13, S1 (к), (л), (м): плагинный MCP с allow, субагент/skill с send-инструментом, CLAUDE_CONFIG_DIR с allow)
+//        [--plugin] [--sender-agent] [--config-dir-allow [--cfg <dir>]]   (S1 (к), (л), (м): allow-правила на плагинные/коннекторные серверы при
+//        strict-конфиге из 4 заглушек, субагент/skill с send-инструментом, CLAUDE_CONFIG_DIR с allow; --cfg: готовый каталог (симлинки agents/skills из run-s1.sh))
 // Окружение: CLAUDE_BIN (обязательно), STUB_CALLS, SPIKE_NODE (путь к node для хуков и заглушек).
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildClaudeArgs, buildGateSettings, SUBAGENTS, SEND_TOOLS } from '../../lib/policy.mjs';
-import { SERVERS, PLUGIN_SERVER } from './stub-mcp.mjs';
+import { SEND_MCP_SERVERS } from '../../lib/mcp-config.mjs';
 
 const here = (f) => fileURLToPath(new URL(f, import.meta.url));
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
 const opt = (n, d) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : d);
 
+/**
+ * (к): allow-правила на серверы, которых в strict-конфиге нет: условный плагин и реальные установленные пользователем
+ * плагины/коннекторы как эмуляция. Если strict-конфиг работает, ни один из них не поднимается и allow ничего не открывает.
+ */
+export const FOREIGN_ALLOW = Object.freeze(['mcp__plugin_x_y', 'mcp__plugin_productivity_slack', 'mcp__plugin_engineering_asana', 'mcp__claude_ai_Gmail', 'mcp__yadisk', 'mcp__telegram']);
+/** Имя сервера в именах инструментов: Claude Code заменяет всё, кроме букв, цифр, «_» и «-», на «_» ('generic:gitlab' -> 'generic_gitlab'). */
+export const normalizeServer = (key) => key.replace(/[^A-Za-z0-9_-]/g, '_');
+
 /** Ядро сборки: чистая функция, её проверяет тест (без запуска claude). */
-export function buildLaunch({ work, gate = true, dump = false, hookFault = null, narrowAgent = false, plugin = false, senderAgent = false, configDirAllow = false, format = 'json', node = process.execPath, calls, policyPath }) {
+export function buildLaunch({ work, gate = true, dump = false, hookFault = null, narrowAgent = false, plugin = false, senderAgent = false, configDirAllow = false, cfgDir, format = 'json', node = process.execPath, calls, policyPath }) {
   const runDir = join(work, 'run');
   mkdirSync(join(runDir, 'slots'), { recursive: true, mode: 0o700 });
   const gateCfg = { nodePath: node, gatePath: here('../../hooks/send-gate.mjs'), runDir, policyPath };
-  let args = buildClaudeArgs({ send: true, gate: gateCfg });
+  // Заглушки вместо четырёх настоящих серверов: ключи те же, что в боевом конфиге (SEND_MCP_SERVERS, включая 'generic:gitlab'),
+  // а аргумент заглушки — нормализованное имя, под которым её инструменты видит claude.
+  const mcpPath = join(work, 'mcp.json');
+  const mcp = { mcpServers: Object.fromEntries(SEND_MCP_SERVERS.map((key) => [key, { command: node, args: [here('./stub-mcp.mjs'), normalizeServer(key)], env: { STUB_CALLS: calls } }])) };
+  writeFileSync(mcpPath, JSON.stringify(mcp), { mode: 0o600 });
+  // Продакшн-сборщик: он же добавляет --strict-mcp-config --mcp-config <path>.
+  let args = buildClaudeArgs({ send: true, gate: gateCfg, mcpConfigPath: mcpPath });
   const set = (name, fn) => { const i = args.indexOf(name); args[i + 1] = fn(args[i + 1]); };
   if (format !== 'json') set('--output-format', () => format);
   if (format === 'stream-json') args.push('--verbose');
@@ -50,10 +65,11 @@ export function buildLaunch({ work, gate = true, dump = false, hookFault = null,
   }
   const env = {};
   if (plugin) {
-    // (к): allow-правило на плагинный сервер в settings; deny mcp__plugin_ остаётся в --disallowedTools
+    // (к): только allow-правила в settings (deny mcp__plugin_ остаётся в --disallowedTools как defense-in-depth);
+    // самих серверов в --mcp-config нет, их не поднимает --strict-mcp-config.
     const i = args.indexOf('--settings');
     const settings = i >= 0 ? JSON.parse(args[i + 1]) : {};
-    settings.permissions = { ...(settings.permissions || {}), allow: [...(settings.permissions?.allow || []), `mcp__${PLUGIN_SERVER}`] };
+    settings.permissions = { ...(settings.permissions || {}), allow: [...(settings.permissions?.allow || []), ...FOREIGN_ALLOW] };
     if (i >= 0) args[i + 1] = JSON.stringify(settings); else args.push('--settings', JSON.stringify(settings));
   }
   if (senderAgent) {
@@ -64,16 +80,12 @@ export function buildLaunch({ work, gate = true, dump = false, hookFault = null,
     writeFileSync(join(work, '.claude', 'skills', 'spike-send', 'SKILL.md'), `---\nname: spike-send\ndescription: Spike: send one chat message.\nallowed-tools: ${SEND_TOOLS[0]}\n---\nCall messenger-send-message once with the given chat_sn and text.\n`);
   }
   if (configDirAllow) {
-    // (м): корень настроек из CLAUDE_CONFIG_DIR с allow-правилом на send-инструмент
-    const cfg = join(work, 'cfg');
+    // (м): корень настроек из CLAUDE_CONFIG_DIR с allow-правилом на send-инструмент (cfgDir: готовый каталог с симлинками agents/skills)
+    const cfg = cfgDir || join(work, 'cfg');
     mkdirSync(cfg, { recursive: true, mode: 0o700 });
     writeFileSync(join(cfg, 'settings.json'), JSON.stringify({ permissions: { allow: [SEND_TOOLS[0]] } }), { mode: 0o600 });
     env.CLAUDE_CONFIG_DIR = cfg;
   }
-  const mcp = { mcpServers: Object.fromEntries([...SERVERS, ...(plugin ? [PLUGIN_SERVER] : [])].map((s) => [s, { command: node, args: [here('./stub-mcp.mjs'), s], env: { STUB_CALLS: calls } }])) };
-  const mcpPath = join(work, 'mcp.json');
-  writeFileSync(mcpPath, JSON.stringify(mcp), { mode: 0o600 });
-  args.push('--mcp-config', mcpPath, '--strict-mcp-config');
   return { args, runDir, env };
 }
 
@@ -85,7 +97,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const policyPath = join(work, 'send-policy.json');
   writeFileSync(policyPath, JSON.stringify({ version: 1, allow: { vk_chats: ['spike-chat'], gitlab_projects: ['group/proj', '4242'], jira_projects: ['SPIKE'], confluence_spaces: ['SPK'] } }), { mode: 0o600 });
   const { args, env: extraEnv } = buildLaunch({
-    work, gate: !flag('--no-gate'), dump: flag('--dump'), hookFault: flag('--hook-sleep') ? 'sleep' : flag('--hook-fail') ? 'fail' : null, narrowAgent: flag('--narrow-agent'), plugin: flag('--plugin'), senderAgent: flag('--sender-agent'), configDirAllow: flag('--config-dir-allow'), format: opt('--format', 'json'),
+    work, gate: !flag('--no-gate'), dump: flag('--dump'), hookFault: flag('--hook-sleep') ? 'sleep' : flag('--hook-fail') ? 'fail' : null, narrowAgent: flag('--narrow-agent'), plugin: flag('--plugin'), senderAgent: flag('--sender-agent'), configDirAllow: flag('--config-dir-allow'), cfgDir: opt('--cfg'), format: opt('--format', 'json'),
     node: process.env.SPIKE_NODE || process.execPath, calls: process.env.STUB_CALLS, policyPath,
   });
   const child = spawn(bin, args, { stdio: ['inherit', 'inherit', 'inherit'], cwd: work, env: { ...process.env, ...extraEnv, ...(flag('--autonomous') ? { AUTONOMOUS_RUN: '1' } : {}) } });

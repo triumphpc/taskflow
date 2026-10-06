@@ -17,7 +17,8 @@ import { buildClaudeArgs, buildFallbackInvocation, isSendEnabled, LIMITS_RUN } f
 import { buildPrompt } from './lib/prompt.mjs';
 import { parseClaudeOutput } from './lib/output.mjs';
 import { defaultPolicyPath, policyState } from './lib/send-policy.mjs';
-import { createRunDir, findLatestRunDir, pruneRunDirs } from './lib/run-dir.mjs';
+import { createRunDir, findLatestRunDir, pruneRunDirs, sweepMcpConfigs } from './lib/run-dir.mjs';
+import { buildSendMcpConfig, writeMcpConfig, removeMcpConfig, removeAllMcpConfigs } from './lib/mcp-config.mjs';
 import { readAudit, buildJournal } from './lib/audit.mjs';
 import { checkSettingsForSend } from './lib/settings-preflight.mjs';
 import { readFileSync } from 'node:fs';
@@ -53,7 +54,8 @@ export async function runOnce({
   client, run = runClaude, lock, env = process.env, now = () => new Date(), log = () => {},
   command, argsPrefix = [], invocation, limits = LIMITS_RUN, cwd, signal, passEnv,
   send = isSendEnabled(env), stateDir = lock?.stateDir, policyPath, nodePath = process.execPath, gatePath = GATE_PATH,
-  runDirs = { create: createRunDir, find: findLatestRunDir, prune: pruneRunDirs }, audit = { read: readAudit }, spikeNote = SPIKE_NOTE,
+  runDirs = { create: createRunDir, find: findLatestRunDir, prune: pruneRunDirs },
+  mcp = { build: buildSendMcpConfig, write: writeMcpConfig, remove: removeMcpConfig }, audit = { read: readAudit }, spikeNote = SPIKE_NOTE,
 }) {
   const result = { outcome: 'done', processed: [], reaped: [] };
   if (send && !stateDir) throw new TypeError('stateDir обязателен в режиме с отправкой');
@@ -68,7 +70,12 @@ export async function runOnce({
   if (!lock.acquire()) { log({ event: 'locked' }); return { ...result, outcome: 'locked' }; }
   try {
     const today = toDateStr(now());                       // локальная дата Mac (C4, C8)
+    // Остатки mcp.json после SIGKILL прошлого прогона (под замком, живых прогонов нет): и при send=off, чтобы секреты не залёживались.
+    if (stateDir) {
+      try { const n = sweepMcpConfigs({ stateDir }); if (n) log({ event: 'mcp_config_swept', count: n }); } catch (err) { log({ event: 'mcp_sweep_failed', error: errText(err) }); }
+    }
     if (send) {
+      // prune делает то же для старых каталогов.
       try { runDirs.prune({ stateDir, now: now().getTime() }); } catch (err) { log({ event: 'prune_failed', error: errText(err) }); }
       log({ event: 'send_mode', send: true, policy: policyState(policyFile) });
       const sp = spikeVerdicts(spikeNote);
@@ -135,21 +142,50 @@ export async function runOnce({
         }
       }
 
-      const buildOpts = send ? { send: true, gate: { nodePath, gatePath, runDir, policyPath: policyFile } } : {};
-      const inv = invocation ? invocation(buildOpts) : { command, args: [...argsPrefix, ...buildClaudeArgs(buildOpts)] };
-      const prompt = send ? buildPrompt(task, { send: true, previous: claimed.journals.map((j) => j?.text).filter((t) => typeof t === 'string') }) : buildPrompt(task);
-      // AUTONOMOUS_RUN=1 только в режиме с отправкой (C14, ADR-008); TASKFLOW_* по-прежнему не доходят до claude.
-      const runEnv = send ? { ...env, AUTONOMOUS_RUN: '1' } : env;
-      const runPassEnv = send ? [...(passEnv || []), /^AUTONOMOUS_RUN$/] : passEnv;
-      const r = await run({
-        command: inv.command, args: inv.args, input: prompt, env: runEnv, cwd,
-        timeoutMs: limits.TASK_TIMEOUT_MS, pollMs: limits.POLL_MS, killGraceMs: limits.KILL_GRACE_MS,
-        stdoutCapBytes: limits.STDOUT_CAP_BYTES, log, signal, passEnv: runPassEnv,
-        shouldAbort: async () => {
-          const t = (await client.queue({ today, taskId: item.id })).task;
-          return !t || !t.exists || t.done || t.status !== 'in_progress' || t.claimToken !== claimToken;
-        },
-      });
+      // mcp.json (секреты серверов) живёт только вокруг запуска claude: finally ниже снимает его на любом пути
+      // (выход, таймаут, abort, SIGTERM демона, spawn_error, исключение). После SIGKILL остаётся sweep.
+      let mcpPath = null;
+      let mcpFailed = false;
+      let r;
+      try {
+        let mcpSecrets = [];
+        if (send) {
+          try {
+            const cfg = mcp.build({ configDir: env.CLAUDE_CONFIG_DIR, home: env.HOME || homedir() });
+            mcpPath = mcp.write(runDir, cfg);
+            mcpSecrets = cfg.secrets || [];
+            log({ event: 'mcp_config', id: item.id, servers: cfg.found, ...(cfg.missing?.length ? { missing: cfg.missing } : {}) });   // только имена
+          } catch (err) {
+            mcpFailed = true;
+            log({ event: 'mcp_config_failed', id: item.id, reason: err?.reason || 'write_failed' });
+          }
+        }
+        if (!mcpFailed) {
+          const buildOpts = send ? { send: true, gate: { nodePath, gatePath, runDir, policyPath: policyFile }, mcpConfigPath: mcpPath } : {};
+          const inv = invocation ? invocation(buildOpts) : { command, args: [...argsPrefix, ...buildClaudeArgs(buildOpts)] };
+          const prompt = send ? buildPrompt(task, { send: true, previous: claimed.journals.map((j) => j?.text).filter((t) => typeof t === 'string') }) : buildPrompt(task);
+          // AUTONOMOUS_RUN=1 только в режиме с отправкой (C14, ADR-008); TASKFLOW_* по-прежнему не доходят до claude.
+          const runEnv = send ? { ...env, AUTONOMOUS_RUN: '1' } : env;
+          const runPassEnv = send ? [...(passEnv || []), /^AUTONOMOUS_RUN$/] : passEnv;
+          r = await run({
+            command: inv.command, args: inv.args, input: prompt, env: runEnv, cwd,
+            timeoutMs: limits.TASK_TIMEOUT_MS, pollMs: limits.POLL_MS, killGraceMs: limits.KILL_GRACE_MS,
+            stdoutCapBytes: limits.STDOUT_CAP_BYTES, log, signal, passEnv: runPassEnv, extraSecrets: mcpSecrets,
+            shouldAbort: async () => {
+              const t = (await client.queue({ today, taskId: item.id })).task;
+              return !t || !t.exists || t.done || t.status !== 'in_progress' || t.claimToken !== claimToken;
+            },
+          });
+        }
+      } finally {
+        if (mcpPath) {
+          try { mcp.remove(mcpPath); } catch (err) { log({ event: 'mcp_config_remove_failed', id: item.id, error: errText(err) }); }
+        }
+      }
+      if (mcpFailed) {
+        await writeFailed('Не удалось подготовить MCP-конфиг');
+        continue;
+      }
 
       let outcome;
       if (r.kind === 'aborted') {
@@ -206,6 +242,15 @@ export async function main(env = process.env, { log = stdoutLog, run = runClaude
       return EXIT.CONFIG;
     }
   }
+  if (isSendEnabled(env)) {
+    try {
+      const cfg = buildSendMcpConfig({ configDir: env.CLAUDE_CONFIG_DIR, home: env.HOME || homedir() });
+      if (cfg.missing.length) log({ event: 'mcp_servers_missing', servers: cfg.missing });      // только имена
+    } catch (err) {
+      log({ event: 'config_error', problem: 'mcp_config', reason: err?.reason || 'unknown' });   // без путей и значений
+      return EXIT.CONFIG;
+    }
+  }
   const ac = new AbortController();
   // Повторный сигнал (SEC06): не ждём вежливой остановки, убиваем группу ребёнка и выходим.
   let signals = 0;
@@ -214,12 +259,14 @@ export async function main(env = process.env, { log = stdoutLog, run = runClaude
     log({ event: 'signal', signal: name, count: signals });
     if (signals === 1) { ac.abort(); return; }
     killChildGroups();
+    removeAllMcpConfigs();                        // exit() не даёт выполниться finally: секреты убираем здесь
     exit(128 + (name === 'SIGINT' ? 2 : 15));
   };
   const onTerm = onSignal('SIGTERM');
   const onInt = onSignal('SIGINT');
   process.on('SIGTERM', onTerm);
   process.on('SIGINT', onInt);
+  process.on('exit', removeAllMcpConfigs);        // последняя страховка: синхронное удаление при любом выходе процесса
   const stateDir = env.TASKFLOW_AGENT_STATE || join(homedir(), '.local', 'state', 'taskflow-agent');
   try {
     const out = await runOnce({
@@ -239,6 +286,7 @@ export async function main(env = process.env, { log = stdoutLog, run = runClaude
   } finally {
     process.off('SIGTERM', onTerm);
     process.off('SIGINT', onInt);
+    process.off('exit', removeAllMcpConfigs);
   }
 }
 

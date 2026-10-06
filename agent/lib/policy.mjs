@@ -146,9 +146,9 @@ export function buildGateSettings(gate) {
 
 /**
  * argv без команды и без текста задачи: промпт идёт через stdin, каждое значение — один элемент.
- * send=false: аргументы побайтно как до change. send=true: нужен gate, иначе TypeError.
+ * send=false: аргументы побайтно как до change. send=true: нужны gate и mcpConfigPath (путь, не содержимое), иначе TypeError.
  */
-export function buildClaudeArgs({ send = false, gate } = {}) {
+export function buildClaudeArgs({ send = false, gate, mcpConfigPath } = {}) {
   if (!send) {
     return [
       '--agent', AGENT_NAME,
@@ -165,6 +165,8 @@ export function buildClaudeArgs({ send = false, gate } = {}) {
     ];
   }
   const settings = buildGateSettings(gate);      // TypeError без gate
+  // Только четыре сервера из файла (agent/lib/mcp-config.mjs): плагины и коннекторы не поднимаются вовсе (спайк S1 (к)).
+  if (typeof mcpConfigPath !== 'string' || !mcpConfigPath) throw new TypeError('mcpConfigPath обязателен в режиме с отправкой');
   return [
     '--agent', AGENT_NAME,
     '-p',
@@ -176,6 +178,7 @@ export function buildClaudeArgs({ send = false, gate } = {}) {
     '--disallowedTools', DISALLOWED_TOOLS.join(','),
     '--append-system-prompt', SYSTEM_PROMPT_SEND,
     '--settings', JSON.stringify(settings),
+    '--strict-mcp-config', '--mcp-config', mcpConfigPath,
   ];
 }
 

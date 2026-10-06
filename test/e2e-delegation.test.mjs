@@ -1,6 +1,7 @@
 // End to end on a temporary stack: model.js (the browser logic) delegates a task, the daemon runs it with
 // fake-claude through the real MCP and serve.mjs, the user closes it with the checkbox (AC-008, AC-011,
 // AC-016, AC-018, AC-022). Needs the MCP SDK for the real mcp.mjs; skipped without it.
+import { writeUserClaudeJson } from './helpers/mcp-home.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, chmod, readFile } from 'node:fs/promises';
@@ -81,6 +82,7 @@ async function sendStack({ allow = { vk_chats: ['chat-ok'] } } = {}) {
   const stub = join(work, 'mcp-calls.jsonl');
   const writePolicy = async (a) => { await writeFile(policy, JSON.stringify({ version: 1, allow: a }), { mode: 0o600 }); await chmod(policy, 0o600); };
   await writePolicy(allow);
+  await writeUserClaudeJson(work);                 // user-scope MCP из временного HOME (настоящий ~/.claude.json не читается)
   const client = createTaskflowClient({ url: mcp.url, token: mcp.token });
   const stdinOut = join(work, 'stdin.txt');
   const delegate = async (title, notes = '', extra = {}) => {
@@ -94,7 +96,7 @@ async function sendStack({ allow = { vk_chats: ['chat-ok'] } } = {}) {
     client, lock: createLock(join(work, 'state')), log: () => {}, command: process.execPath, argsPrefix: [FAKE], passEnv: [/^FAKE_CLAUDE_/],
     limits: { ...LIMITS_RUN, POLL_MS: 100, TASK_TIMEOUT_MS: 5000, KILL_GRACE_MS: 300, ...limits },
     env: {
-      PATH: process.env.PATH, TASKFLOW_AGENT_SEND: 'on', TASKFLOW_AGENT_SEND_POLICY: policy, FAKE_CLAUDE_MODE: 'send',
+      PATH: process.env.PATH, HOME: work, TASKFLOW_AGENT_SEND: 'on', TASKFLOW_AGENT_SEND_POLICY: policy, FAKE_CLAUDE_MODE: 'send',
       FAKE_CLAUDE_SEND_PLAN: JSON.stringify(plan), FAKE_CLAUDE_MCP_OUT: stub, FAKE_CLAUDE_STDIN_OUT: stdinOut,
       ...(result ? { FAKE_CLAUDE_RESULT: JSON.stringify(result) } : {}), ...(after ? { FAKE_CLAUDE_AFTER: after } : {}), ...envExtra,
     },

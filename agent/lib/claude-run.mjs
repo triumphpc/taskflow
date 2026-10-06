@@ -102,7 +102,7 @@ async function stopGroup(pid, killGraceMs) {
  */
 export function runClaude({
   command, args = [], input = '', env = process.env, cwd,
-  timeoutMs, pollMs, killGraceMs = 10_000, stdoutCapBytes = 1_048_576, passEnv = [],
+  timeoutMs, pollMs, killGraceMs = 10_000, stdoutCapBytes = 1_048_576, passEnv = [], extraSecrets = [],
   shouldAbort, signal, spawnImpl = spawn, log = () => {},
 }) {
   return new Promise((resolve) => {
@@ -110,7 +110,9 @@ export function runClaude({
     if (signal?.aborted) { resolve({ kind: 'aborted', durationMs: 0 }); return; }
     const cenv = childEnv(env, passEnv);
     // Секреты — из ПОЛНОГО окружения демона (включая TASKFLOW_MCP_TOKEN), а не только из окружения ребёнка (SEC05).
-    const secretLen = Math.min(65_536, Math.max(0, ...[...secretsOf(env)].map((x) => x.length)));
+    // extraSecrets: значения env/headers серверов из mcp.json (их нет в окружении демона); тоже редактируются в stderr.
+    const secretEnv = extraSecrets.length ? { ...env, ...Object.fromEntries(extraSecrets.map((v, i) => [`__extra_secret_${i}`, v])) } : env;
+    const secretLen = Math.min(65_536, Math.max(0, ...[...secretsOf(secretEnv)].map((x) => x.length)));
     const windowLen = STDERR_TAIL + secretLen;
     let child;
     try {
@@ -170,7 +172,7 @@ export function runClaude({
         const raw = errTail.slice(-STDERR_TAIL);
         log({
           event: 'claude_stderr_tail', length: raw.length,
-          sha256: createHash('sha256').update(raw).digest('hex'), tail: safeTail(errTail, errTruncated, env),
+          sha256: createHash('sha256').update(raw).digest('hex'), tail: safeTail(errTail, errTruncated, secretEnv),
         });
       }
       if (stopping) return;                       // результат вернёт stop() после гибели группы

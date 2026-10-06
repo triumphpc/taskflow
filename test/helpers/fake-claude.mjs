@@ -7,13 +7,22 @@
 //   FAKE_CLAUDE_AFTER=hang: после плана зависнуть (таймаут, abort). Итог: FAKE_CLAUDE_RESULT (JSON {status,text}), по умолчанию review. Хуки исполняются как команды из --settings.
 // FAKE_CLAUDE_STDIN_OUT / FAKE_CLAUDE_ENV_OUT / FAKE_CLAUDE_ARGS_OUT / FAKE_CLAUDE_PIDFILE record what it saw.
 // FAKE_CLAUDE_IGNORE_TERM=1 makes hang ignore SIGTERM. FAKE_CLAUDE_DELAY_MS delays the answer.
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, statSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { stubCall } from './stub-mcp.mjs';
 
 const mode = process.env.FAKE_CLAUDE_MODE || 'ok';
 const env = (k) => process.env[k];
 if (env('FAKE_CLAUDE_ARGS_OUT')) writeFileSync(env('FAKE_CLAUDE_ARGS_OUT'), JSON.stringify(process.argv.slice(2)));
+// FAKE_CLAUDE_MCP_SNAPSHOT_OUT: что лежало по пути --mcp-config в момент запуска (путь, права, текст), чтобы тест мог проверить файл, которого после прогона уже нет.
+if (env('FAKE_CLAUDE_MCP_SNAPSHOT_OUT')) {
+  const argv = process.argv.slice(2);
+  const i = argv.indexOf('--mcp-config');
+  let snap = { present: false };
+  try { if (i >= 0) snap = { present: true, path: argv[i + 1], mode: statSync(argv[i + 1]).mode & 0o777, text: readFileSync(argv[i + 1], 'utf8'), strict: argv.includes('--strict-mcp-config') }; } catch { /* нет файла */ }
+  writeFileSync(env('FAKE_CLAUDE_MCP_SNAPSHOT_OUT'), JSON.stringify(snap));
+}
+if (env('FAKE_CLAUDE_STDERR_FILE')) console.error(readFileSync(env('FAKE_CLAUDE_STDERR_FILE'), 'utf8'));   // текст из файла: в окружении ребёнка (и в наборе секретов демона) его нет
 if (env('FAKE_CLAUDE_ENV_OUT')) {
   writeFileSync(env('FAKE_CLAUDE_ENV_OUT'), JSON.stringify(Object.keys(process.env).filter((k) => /^(TASKFLOW_|AUTONOMOUS_RUN$)/.test(k))));
 }

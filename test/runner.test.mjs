@@ -14,6 +14,7 @@ import { toDateStr } from '../js/core.js';
 import { makeStore } from './helpers/inproc.mjs';
 import { fakeTaskflow } from './helpers/fake-taskflow.mjs';
 import { reapPidfile } from './helpers/reap.mjs';
+import { writeUserClaudeJson } from './helpers/mcp-home.mjs';
 
 const FAKE = fileURLToPath(new URL('./helpers/fake-claude.mjs', import.meta.url));
 const TODAY = toDateStr(new Date());
@@ -394,6 +395,9 @@ async function sendSetup(tasks, { plan = [], allow = { vk_chats: ['chat-ok'], ji
     ...rest,
   });
   t.env.FAKE_CLAUDE_MCP_OUT = join(t.dir, 'mcp-calls.jsonl');
+  // user-scope .claude.json читается из HOME: временный каталог с синтетическими серверами, настоящий файл не трогается
+  t.env.HOME = t.dir;
+  await writeUserClaudeJson(t.dir);
   t.policy = t.env.TASKFLOW_AGENT_SEND_POLICY;
   t.stateDir = join(t.dir, 'state');
   t.calls = () => readCalls(t.env.FAKE_CLAUDE_MCP_OUT);
