@@ -33,3 +33,8 @@ test('prompt: tolerant to missing fields, states the answer contract', () => {
 test('prompt: system prompt states the rules (read-only, needs_info, failed, one JSON)', () => {
   for (const frag of ['только читаешь', 'не отправляй', 'needs_info', 'failed', 'один JSON-объект']) assert.ok(SYSTEM_PROMPT.includes(frag) || SYSTEM_PROMPT.toLowerCase().includes(frag.toLowerCase()), frag);
 });
+
+test('prompt: a task that needs sending ends as review with a ready draft, not failed', () => {
+  assert.match(SYSTEM_PROMPT, /требует что-то отправить[^\n]*верни review/);
+  assert.match(SYSTEM_PROMPT, /failed возвращай только если подготовить результат невозможно/);
+});
