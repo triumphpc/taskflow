@@ -64,10 +64,17 @@ sorting window with the same steps and decides nothing for you: until you answer
 the "when" step, the record stays in the Inbox. Moments asks the same questions and
 moves to the next card once the last step is answered.
 
-**Entering Moments.** With a non-empty queue, a short (about 1.5 s) animation plays
-first: numbered billiard balls roll in and form a pyramid, one ball per task (up to 15),
-coloured by priority (a ball without a priority is grey). A tap or any key skips it;
-with "reduce motion" enabled in the system there is no animation at all.
+**Entering Moments.** With a non-empty queue, a greeting plays first ("Tuesday, 6 October ·
+12 tasks to plan"): numbered billiard balls scatter around the screen, gather into a pyramid
+(one ball per task, up to 15, coloured by priority, grey without a priority) and line up in a
+tray at the bottom. The sheet then opens as "Moments · tuesday, 6 October · 12 tasks" and the
+first ball rolls from the tray onto the card. The tray holds the balls of the remaining tasks;
+if they do not fit, a "+K" counter shows the rest. An answer to a card (any of the five ways) is
+saved at once, the old card slides away, the new one slides in and the next ball rolls onto it:
+the transition takes about 350 ms and input is locked meanwhile. The whole intro takes 2.5-3 s;
+a tap or any key skips it (the ball is then already on the card). With "reduce motion" enabled in
+the system there is no overlay, tray or transition: the sheet opens at once, the title keeps the
+date and task count.
 
 Keyboard shortcuts: `n` new task, `m` Moments, `s` list order, `,` settings, `1`…`6` views (`1` Today, `5` Inbox).
 
@@ -469,8 +476,12 @@ js/store.js             state, localStorage, export/import
 js/model.js             tasks: CRUD, recurrence, per-view queries, manual order
 js/ui.js                rendering, drag and drop, task editor, settings
 js/moments.js           the daily planning wizard
-js/moments-intro.js     the pyramid animation overlay before Moments
-js/pyramid.js           pure layout, colours and timing for that animation
+js/moments-intro.js     intro overlay: greeting, scatter, pyramid, tray row
+js/moments-flow.js      pure Moments logic: texts, input gate, transition plan
+js/rail.js              pure tray layout and state
+js/intro-scene.js       pure intro scene: frame, scatter, ball schedule
+js/moments-rail.js      ball (makeBall) and tray in the DOM
+js/pyramid.js           pure pyramid primitives: rows, slots, diameter, colour
 js/sync.js              exchange with the sync server, applying the merged result
 js/app.js               entry point, routing, shortcuts, reminders
 sw.js                   offline shell cache

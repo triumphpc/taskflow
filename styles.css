@@ -517,6 +517,20 @@ body.is-dragging .task-open { pointer-events: none; }
   animation: fade .15s ease-out;
 }
 .intro-rack { position: absolute; inset: 0; pointer-events: none; }
+/* Приветствие над пирамидой: белый текст на затемнении одинаково читается в обеих темах. */
+.intro-greeting {
+  position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; text-align: center; text-wrap: balance; color: #fff;
+  text-shadow: 0 1px 8px rgba(0,0,0,.45); pointer-events: none;
+}
+.intro-date { font-size: clamp(22px, 6vw, 34px); font-weight: 700; line-height: 1.15; }
+.intro-count { font-size: clamp(15px, 4vw, 19px); font-weight: 560; opacity: .92; }
+/* Пробная полоса: пустая, по ней измеряется верх будущего лотка. */
+.intro .rail {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: var(--rail-h); padding-bottom: var(--safe-b); box-sizing: border-box;
+  pointer-events: none;
+}
 .ball {
   position: absolute; left: 0; top: 0;
   width: var(--d); height: var(--d); border-radius: 50%;
@@ -524,6 +538,8 @@ body.is-dragging .task-open { pointer-events: none; }
   box-shadow: 0 2px 6px rgba(0,0,0,.35), inset 0 -3px 5px rgba(0,0,0,.2);
   display: grid; place-items: center; will-change: transform;
 }
+/* Шар лотка меньше 36 px показывает только цвет. */
+.ball.no-num .ball-num { display: none; }
 /* Белый круг и тёмная цифра не зависят от темы: номер читается на любом цвете шара. */
 .ball-num {
   width: 46%; height: 46%; border-radius: 50%;
@@ -561,7 +577,9 @@ body.is-dragging .task-open { pointer-events: none; }
   display: flex; align-items: center; gap: 10px;
   padding: 14px 16px; border-bottom: 1px solid var(--line-soft); flex: none;
 }
-.sheet-head h2 { font-size: 15px; font-weight: 640; }
+.sheet-head h2 { font-size: 15px; font-weight: 640; min-width: 0; overflow-wrap: anywhere; }
+/* Шторка принимает фокус только программно (Moments возвращает его после смены карточки). */
+.sheet:focus { outline: none; }
 .sheet-head .spacer { margin-left: auto; }
 .sheet-body { padding: 16px; overflow-y: auto; flex: 1; -webkit-overflow-scrolling: touch; }
 .sheet-foot {
@@ -580,6 +598,47 @@ body.is-dragging .task-open { pointer-events: none; }
   .sheet-foot { padding-bottom: calc(12px + var(--safe-b)); }
   /* Во всю ширину экрана рост от угла выглядит рывком — оставляем выезд снизу. */
   .sheet.sheet-composer { transform-origin: bottom center; animation: rise .18s cubic-bezier(.2, .8, .3, 1); }
+}
+
+/* ---------- Moments: шторка над лотком ---------- */
+/* Лоток живёт внутри оверлея шторки и стоит выше неё. Вход шторки здесь делает WAAPI после
+   измерения цели полёта шара, поэтому CSS-анимации rise и fade отключены. --rail-h ставит JS
+   (высота полосы плюс safe-area), на нём же держатся отступы. */
+
+.overlay.overlay-rail {
+  animation: none;
+  padding-bottom: calc(var(--rail-h) + 12px);
+}
+.overlay-rail .sheet {
+  animation: none; position: relative;
+  max-height: min(86vh, 760px, calc(100vh - var(--rail-h) - 44px));
+}
+.rail {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: var(--rail-h); padding-bottom: var(--safe-b); box-sizing: border-box;
+  z-index: 2; pointer-events: auto;
+}
+.rail .ball, .rail .rail-more { top: 8px; }
+/* Чип «+K»: место последнего слота, когда в ряд помещаются не все шары. */
+.rail-more {
+  position: absolute; left: 0; top: 0; width: var(--d); height: var(--d); box-sizing: border-box;
+  border-radius: 50%; border: 1.5px solid rgba(255,255,255,.7); color: #fff;
+  font: 700 11px/1 system-ui, sans-serif; display: grid; place-items: center;
+  text-shadow: 0 1px 4px rgba(0,0,0,.5);
+}
+/* Шар текущей карточки: номер в очереди и приоритет. */
+.moments-ball { left: auto; right: 0; top: 0; --d: 44px; }
+.moments-task.has-ball { position: relative; padding-right: 54px; min-height: 44px; }
+/* Уезжающая карточка не рисует горизонтальную прокрутку. */
+.moments-body { overflow-x: hidden; }
+.moments-ghost { position: absolute; overflow: hidden; pointer-events: none; }
+@media (max-width: 640px) {
+  .overlay.overlay-rail { padding: 0 0 calc(var(--rail-h) + 8px); }
+  .overlay-rail .sheet, .overlay-rail .sheet.sheet-composer {
+    max-height: calc(92vh - var(--rail-h) - 8px);
+    border-radius: 18px; border-bottom: 1px solid var(--line);
+  }
+  .overlay-rail .sheet-foot { padding-bottom: 12px; }
 }
 
 /* ---------- Формы ---------- */
