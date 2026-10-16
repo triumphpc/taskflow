@@ -6,9 +6,9 @@ import { readFile } from 'node:fs/promises';
 
 const read = (rel) => readFile(new URL(rel, import.meta.url), 'utf8');
 
-test('ui static: sw.js has cache taskflow-v18 and ./js/agent.js in the shell (C13, AC-026)', async () => {
+test('ui static: sw.js has cache taskflow-v19 and ./js/agent.js in the shell (C13, AC-026)', async () => {
   const sw = await read('../sw.js');
-  assert.match(sw, /const CACHE = 'taskflow-v18';/);
+  assert.match(sw, /const CACHE = 'taskflow-v19';/);
   assert.ok(sw.includes("'./js/agent.js'"));
 });
 
@@ -148,9 +148,9 @@ test('ui static: moments-intro reads matchMedia per call, skips on click and cap
   assert.match(src, /railTop: probe\.getBoundingClientRect\(\)\.top/);
 });
 
-test('ui static: sw.js is taskflow-v18 and the shell lists the Moments modules, which exist (AC-033)', async () => {
+test('ui static: sw.js is taskflow-v19 and the shell lists the Moments modules, which exist (AC-033)', async () => {
   const sw = await read('../sw.js');
-  assert.match(sw, /const CACHE = 'taskflow-v18';/);
+  assert.match(sw, /const CACHE = 'taskflow-v19';/);
   assert.doesNotMatch(sw, /taskflow-v17/);
   for (const f of ['./js/pyramid.js', './js/moments-intro.js', './js/moments-flow.js', './js/rail.js', './js/intro-scene.js', './js/moments-rail.js']) {
     assert.ok(sw.includes(`'${f}'`), f);

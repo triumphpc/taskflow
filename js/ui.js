@@ -2,7 +2,7 @@
 
 import { todayStr, addDaysStr, toDateStr, fmtDue, fmtDayLabel, fmtTime, datePart, timePart,
   combineDue, plural, oneLine } from './core.js';
-import { $, h, clear, append, debounce, linkify, caretIndexAt } from './dom.js';
+import { $, h, clear, append, debounce, linkify, caretIndexAt, openExternal, isWebUrl } from './dom.js';
 import { schedulePicker } from './scheduler.js';
 import { state, subscribe, patchSettings, setSetting, exportJson, importJson, wipeAll } from './store.js';
 import * as S from './sync.js';
@@ -647,10 +647,12 @@ export function sourceLine(task) {
     h('span', { class: 'ico', 'aria-hidden': 'true' }, icon),
     h('span', null, src.title ? `${label} · ${oneLine(src.title)}` : label),
     h('span', { class: 'at' }, src.at ? fmtStamp(src.at) : ''),
-    src.url
+    isWebUrl(src.url)
       ? h('a', {
-        class: 'inbox-link', href: src.url, target: '_blank', rel: 'noopener',
+        class: 'inbox-link', href: src.url, target: '_blank', rel: 'noopener noreferrer',
         title: 'Открыть источник', 'aria-label': 'Открыть источник',
+        onclick: (e) => { e.stopPropagation(); e.preventDefault(); openExternal(src.url); },
+        onpointerdown: (e) => e.stopPropagation(),
       }, '↗')
       : null);
 }
