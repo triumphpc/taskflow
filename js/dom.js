@@ -89,6 +89,31 @@ export function findLinks(text) {
   return out;
 }
 
+/** Открывает внешний адрес в отдельной вкладке (в iOS-PWA — в Safari поверх
+ *  приложения) и никогда не уводит само приложение со страницы.
+ *  Не window.open: в установленном PWA на iOS он всегда возвращает null, и
+ *  прежний запасной `location.href = …` открывал ссылку прямо в окне TaskFlow.
+ *  Отдельный <a target="_blank">, нажатый в том же жесте пользователя,
+ *  блокировщик всплывающих окон не трогает, и ему не важно, жив ли ещё в DOM
+ *  исходный элемент. Вызывать только из обработчика нажатия. */
+export function openExternal(href, doc = document) {
+  if (!isWebUrl(href)) return false;
+  const a = doc.createElement('a');
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.style.display = 'none';
+  doc.body.append(a);
+  try { a.click(); } finally { a.remove(); }
+  return true;
+}
+
+/** Только http(s): `javascript:` и прочие схемы наружу не открываем —
+ *  адрес источника приходит от агента и мог быть подложен. */
+export function isWebUrl(href) {
+  return /^https?:\/\/[^\s/]/i.test(String(href ?? ''));
+}
+
 /** Текст → массив узлов, где адреса стали кликабельными <a>. Остальное
  *  остаётся текстовыми узлами, поэтому вставлять в DOM безопасно. */
 export function linkify(text) {
@@ -105,16 +130,12 @@ export function linkify(text) {
       target: '_blank',
       rel: 'noopener noreferrer',
       // Переход делаем сами, а не полагаемся на обработку target="_blank"
-      // браузером: в установленном PWA его глушит блокировщик всплывающих окон,
-      // а в заметках вид со ссылками прячется прямо в обработчике нажатия —
-      // браузер успевает отменить переход. Если открыть вкладку не дали,
-      // уходим по адресу в текущем окне.
+      // исходной ссылкой: в заметках вид со ссылками прячется прямо в
+      // обработчике нажатия, и браузер успевает отменить переход.
       onclick: (e) => {
         e.stopPropagation();
         e.preventDefault();
-        const win = window.open(l.href, '_blank');
-        if (win) { try { win.opener = null; } catch { /* другой источник */ } }
-        else location.href = l.href;
+        openExternal(l.href);
       },
       onpointerdown: (e) => e.stopPropagation(),
     }, l.raw));
